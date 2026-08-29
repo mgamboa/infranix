@@ -749,6 +749,10 @@ def project_run(name: str, out_dir: str, apply: bool, vault_password: str | None
         click.echo("Images:")
         for i in report.images_ensured:
             click.echo(f"  - {i}")
+    if report.template_messages:
+        click.echo("Templates:")
+        for t in report.template_messages:
+            click.echo(f"  - {t}")
     if report.provision_log:
         click.echo("Provision:")
         click.echo(report.provision_log.strip()[-1500:])

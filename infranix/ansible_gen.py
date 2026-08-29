@@ -351,7 +351,7 @@ class AnsibleGenerator:
         # ── ansible.cfg (enable YAML inventory plugin, disable host key check) ──
         (base / "ansible.cfg").write_text(
             "[inventory]\n"
-            "enable_plugins = yaml, host_list, script, auto\n\n"
+            "enable_plugins = host_list, script, yaml, auto\n\n"
             "[defaults]\n"
             "host_key_checking = False\n"
         )
