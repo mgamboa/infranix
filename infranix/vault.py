@@ -82,6 +82,17 @@ def is_vault_encrypted(value: str) -> bool:
     return isinstance(value, str) and value.startswith(_VAULT_PREFIX)
 
 
+def can_decrypt(value: str, password: str) -> bool:
+    """Return True if *value* is a vault string that can be decrypted with *password*."""
+    if not is_vault_encrypted(value):
+        return False
+    try:
+        decrypt_value(value, password)
+        return True
+    except (ValueError, InvalidToken):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # YAML helpers
 # ---------------------------------------------------------------------------

@@ -449,20 +449,29 @@ def vault():
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--key", "-k", default=None, help="YAML key to encrypt (default: all string values)")
 @click.option("--vault-password", "-p", default=None, help="Vault password (default: prompt)")
-def vault_encrypt(path: str, key: str | None, vault_password: str | None):
+@click.option("--force", "-f", is_flag=True, help="Re-encrypt even if already properly encrypted")
+def vault_encrypt(path: str, key: str | None, vault_password: str | None, force: bool):
     """Encrypt one or all string values in a YAML file.
 
     PATH is typically <project>/defaults/main.yml. Encrypted values are marked
     with the ``vault:`` prefix and can be decrypted with ``vault decrypt``
     or transparently by ``project run``.
 
+    If a value already starts with ``vault:`` but cannot be decrypted (broken
+    placeholder), it is treated as raw text and re-encrypted.  Use ``--force``
+    to re-encrypt values that are already properly encrypted.
+
     Examples::
 
-        infranix project vault encrypt mysatellite/defaults/main.yml -k INFRA_PASSWORD
-        infranix project vault encrypt mysatellite/defaults/main.yml
+        infranix project vault encrypt satellite/defaults/main.yml -k INFRA_PASSWORD
+        infranix project vault encrypt satellite/defaults/main.yml
+        infranix project vault encrypt satellite/defaults/main.yml -k RHN_PASSWORD -f
     """
     import yaml as _yaml
-    from infranix.vault import encrypt_value, resolve_vault_password, is_vault_encrypted
+    from infranix.vault import (
+        encrypt_value, resolve_vault_password,
+        is_vault_encrypted, can_decrypt,
+    )
 
     pw = resolve_vault_password(vault_password)
     if not pw:
@@ -473,12 +482,36 @@ def vault_encrypt(path: str, key: str | None, vault_password: str | None):
     for k, v in data.items():
         if key and k != key:
             continue
-        if isinstance(v, str) and not is_vault_encrypted(v):
+        if not isinstance(v, str):
+            continue
+        if not is_vault_encrypted(v):
+            # Plain text → encrypt
             data[k] = encrypt_value(v, pw)
             changed += 1
             click.echo(f"  encrypted: {k}")
-        elif is_vault_encrypted(v):
-            click.echo(f"  already encrypted: {k}")
+        elif can_decrypt(v, pw):
+            # Already properly encrypted
+            if force:
+                import yaml as _y
+                plain = _y.safe_load(
+                    __import__('infranix.vault', fromlist=['decrypt_value'])
+                    .decrypt_value(v, pw))
+                data[k] = encrypt_value(str(plain), pw)
+                changed += 1
+                click.echo(f"  re-encrypted: {k}")
+            else:
+                click.echo(f"  already encrypted: {k}")
+        else:
+            # Starts with vault: but can't decrypt → broken placeholder
+            # Ask user for the real value
+            import getpass
+            real = getpass.getpass(f"  {k} has a broken vault value. Enter the real value: ")
+            if real:
+                data[k] = encrypt_value(real, pw)
+                changed += 1
+                click.echo(f"  encrypted: {k}")
+            else:
+                click.echo(f"  skipped: {k} (no value provided)")
 
     if changed:
         import pathlib
@@ -512,8 +545,8 @@ def vault_decrypt(path: str, vault_password: str | None):
                 data[k] = decrypt_value(v, pw)
                 changed += 1
                 click.echo(f"  decrypted: {k}")
-            except ValueError as e:
-                raise click.ClickException(f"Failed to decrypt '{k}': {e}")
+            except ValueError:
+                click.echo(f"  skipped: {k} (broken vault value — use 'vault encrypt -k {k}' to fix)")
 
     if changed:
         import pathlib
