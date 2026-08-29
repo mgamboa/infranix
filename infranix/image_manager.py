@@ -28,6 +28,7 @@ import requests
 
 from infranix.config import InfraConfig
 from infranix.adapters.discovery import ESXiScanner
+from infranix.models import Image
 
 
 # ─────────────────────────── Fuentes de descarga ───────────────────────────
@@ -240,3 +241,53 @@ class ImageManager:
     def _iso_local_name(name: str, distro: str, version: str) -> str:
         safe = re.sub(r"[^a-z0-9.-]", "-", name.lower())
         return f"{safe}-{distro}{version}.iso"
+
+    # ── Construcción de template con Packer (vía colección BUILD) ──
+    def build_template(self, name: str, distro: str, version: str,
+                       checksum: str = "none") -> ImageManagerResult:
+        """Construye un template clonable a partir del ISO (Packer).
+
+        Requiere que el ISO esté en la cache local (asegurado con `ensure`).
+        La lógica vive en la colección con capability BUILD: el core solo
+        delega a través del protocolo, no importa internals de Packer.
+        """
+        from infranix.core.registry import get_registry
+        from infranix.pluginbase import Capability, PluginContext
+
+        record = ImageRecord(name=name, distro=distro, version=version)
+        local_name = self._iso_local_name(name, distro, version)
+        local_path = self.cache_dir / local_name
+
+        if not local_path.exists():
+            return ImageManagerResult(
+                record, "none",
+                f"ISO '{local_name}' no está en cache. Ejecuta 'infra image ensure' "
+                f"primero (o setea la cache en ~/.infranix/images).")
+
+        provider = get_registry().resolve(Capability.BUILD)
+        if provider is None:
+            return ImageManagerResult(
+                record, "none",
+                "Ninguna colección con capability BUILD habilitada. "
+                "Revisa 'infra collection list' (Packer).")
+
+        image = Image(name=name, distro=distro, version=version,
+                      build={"builder": "packer"})
+        work_dir = self.cache_dir / f"packer-{name}"
+        ctx = PluginContext(config=self.config, manifest=None,
+                            image=image,
+                            work_dir=work_dir,
+                            extras={"iso_path": str(local_path)})
+        report = provider.apply(ctx)
+        print(f"    [{provider.name}] {report.message}")
+        if report.ok:
+            record.status = "template-ready"
+            record.local_path = str(local_path)
+            catalog = self._load_catalog()
+            catalog[name] = vars(record)
+            self._save_catalog(catalog)
+            return ImageManagerResult(
+                record, "template-ready",
+                f"Template '{name}' construido con Packer y listo para clonar.")
+        return ImageManagerResult(
+            record, "none", report.message)

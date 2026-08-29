@@ -1,48 +1,41 @@
-# Ejemplo de manifiesto declarativo para InfraNix.
-# Rediseñado sobre la infraestructura real detectada en el ESXi.
-# ------------------------------------------------------------------
-# NOTA: este archivo es un EJEMPLO. Ningún change se ejecuta con 'plan'.
+# Example manifest for an existing environment, declared with ${VAR} dynamic values.
+# Real hosts/IPs are NEVER hardcoded here; they come from the environment or
+# ~/.infranix/.env at runtime. See docs/MANUAL.md (Variables section).
 version: 1
-project: itmco-wazuh
-hypervisor: esxi
+project: ${PROJECT_NAME}
+hypervisor: ${INFRA_HYPERVISOR}
 
 scan_before_apply: true
 
-# POLITICAS DE SEGURIDAD
+# SAFETY: keep destroy:false to protect existing infrastructure
 safety:
-  destroy: false            # <-- mantente false para proteger tu infra
+  destroy: false
   allow_downtime: false
   confirm_destructive: true
 
-# IMAGENES (las que ya tenemos en el datastore + una que faltara para
-# demostrar el Image Manager)
 images:
   - { name: rhel-9.5, distro: rhel, version: "9.5", source: { type: template } }
   - { name: rocky-10.2, distro: rocky, version: "10.2", source: { type: template } }
 
-# RED: una sola red que ya existe
 networks:
-  - name: VM Network
+  - name: ${INFRA_NETWORK}
     type: portgroup
-    subnet: 192.168.2.0/24
-    gateway: 192.168.2.1
+    subnet: ${SUBNET}
+    gateway: ${GATEWAY}
 
-# SERVIDORES
 servers:
-  # → VM nueva a partir de un template que aun no registramos:
-  #   el Marie lo marcaria como image-missing (probaremos Image Manager luego).
   - name: web-prod-01
     image: rhel-9.5
     cpu: 4
     mem: 8192
     disk: 60
     network:
-      - { name: "VM Network", ip: 192.168.2.120/24, gateway: 192.168.2.1, dns: [192.168.2.1] }
+      - { name: ${INFRA_NETWORK}, ip: ${WEB_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
     roles: [webserver]
     action: create
 
-  # → Reconoce una VM existente (solo la actualizaria, no debe tocar nada mas)
-  - name: wazuh-server-01
+  # Recognizes an existing VM (would only update it)
+  - name: ${EXISTING_SERVER_A}
     image: rhel-9.5
     cpu: 8
     mem: 16384
@@ -50,12 +43,12 @@ servers:
     roles: [wazuh-server]
     action: update
 
-  # → DEMOSTRACION DE SEGURIDAD: pedimos destruir una VM existente
-  #   SIN safety.destroy:true. El Safety Gate DEBE bloquear esto.
-  - name: Client
+  # SAFETY DEMO: attempts to destroy an existing VM without safety.destroy:true.
+  # The Safety Gate MUST block this.
+  - name: ${EXISTING_SERVER_B}
     image: rhel-9.5
     cpu: 4
     mem: 8192
     disk: 20
     roles: []
-    action: destroy     # <-- forzará bloqueo porque safety.destroy=false
+    action: destroy     # forces a block because safety.destroy=false

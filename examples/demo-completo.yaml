@@ -1,9 +1,8 @@
-# Manifiesto de demostración de todas las secciones del manual.
-# Incluye: images, networks, servers (create/update/destroy),
-#          routers y load_balancers. Solo demuestra el parseo/plan.
+# Demo: all manifest sections with dynamic ${VAR} values.
+# Vars resolve at runtime from the environment or ~/.infranix/.env.
 version: 1
 project: demo-completo
-hypervisor: esxi
+hypervisor: ${INFRA_HYPERVISOR}
 
 safety:
   destroy: false
@@ -12,16 +11,18 @@ safety:
 images:
   - name: rockylinux-9
     distro: rocky
-    version: "9.5"
+    version: "${ROCKY_VERSION}"
+    build:
+      builder: packer
   - name: rhel-8
     distro: rhel
-    version: "8.9"
+    version: "${RHEL8_VERSION}"
 
 networks:
-  - name: VM Network
+  - name: ${INFRA_NETWORK}
     type: portgroup
-    subnet: 192.168.2.0/24
-    gateway: 192.168.2.1
+    subnet: ${SUBNET}
+    gateway: ${GATEWAY}
 
 servers:
   - name: web-prod-01
@@ -30,7 +31,7 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: VM Network, ip: 192.168.2.160/24, gateway: 192.168.2.1, dns: [192.168.2.1] }
+      - { name: ${INFRA_NETWORK}, ip: ${WEB1_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
     roles: [webserver, monitoring-agent]
     action: create
 
@@ -40,7 +41,7 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: VM Network, ip: 192.168.2.161/24, gateway: 192.168.2.1, dns: [192.168.2.1] }
+      - { name: ${INFRA_NETWORK}, ip: ${WEB2_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
     roles: [webserver, monitoring-agent]
     action: create
 
@@ -48,7 +49,7 @@ routers:
   - name: edge-router
     image: rhel-8
     interfaces:
-      - { network: VM Network, ip: 192.168.2.254 }
+      - { network: ${INFRA_NETWORK}, ip: ${ROUTER_IP} }
     nat: true
 
 load_balancers:

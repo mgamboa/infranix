@@ -1,0 +1,333 @@
+"""Packer builder — construye templates clonables desde ISO.
+
+Genera un archivo Packer (`packer.pkr.hcl`) que automatiza la instalación de
+un sistema operativo (kickstart / preseed / autounattend) en el hypervisor y
+lo deja listo como template clonable por Terraform.
+
+Dos builders según el hypervisor:
+  - ESXi standalone          -> vmware-iso  (remote_type = esx5)
+  - vCenter / vSphere        -> vsphere-iso
+
+El template resultante se registra con el nombre `server.image`, de modo que
+la generación de Terraform (clona del template) funcione sin intervención.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Optional
+
+from infranix.config import InfraConfig
+from infranix.models import Image
+
+
+# ─────────────────────────── Kickstart (RHEL/Rocky/CentOS) ───────────────────────────
+
+KICKSTART_TEMPLATE = """\
+# Kickstart generado por InfraNix — instalación desatendida
+lang en_US.UTF-8
+keyboard us
+timezone UTC
+# Network: dhcp inicial; la VM se clona despues con IP estatica (customize)
+network --bootproto=dhcp --device=link --activate
+rootpw --iscrypted {{ .RootPasswordHash }}
+# Base install (sin GUI)
+url --url="{{ .Mirror }}"
+repo --name="baseos" --baseurl="{{ .Mirror }}/BaseOS"
+repo --name="appstream" --baseurl="{{ .Mirror }}/AppStream"
+
+%packages
+@core
+%end
+
+%addon com_redhat_kdump --disable
+%end
+
+clearpart --all --initlabel
+part /boot --fstype="xfs" --size=1024 --asprimary
+part pv.01 --size=1 --grow
+volgroup vg0 pv.01
+logvol / --fstype="xfs" --name=root --vgname=vg0 --size=20480 --grow
+
+services --enabled="NetworkManager,sshd,cloud-init,open-vm-tools"
+
+# Habilitar SSH y cloud-init (clave dinamica via cloud-init / customize)
+%post
+sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+systemctl enable sshd
+systemctl enable open-vm-tools
+%end
+
+reboot
+"""
+
+PRESEED_TEMPLATE = """\
+# Preseed generado por InfraNix — instalación desatendida (Ubuntu/Debian)
+d-i debian-installer/locale string en_US
+d-i keyboard-configuration/xkb-keymap select us
+d-i time/zone string UTC
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string {{ .HostName }}
+d-i netcfg/get_domain string local
+d-i mirror/country string manual
+d-i mirror/http/hostname string {{ .Mirror }}
+d-i mirror/http/directory string /ubuntu
+
+d-i passwd/root-login boolean true
+d-i passwd/root-password string {{ .RootPassword }}
+d-i passwd/root-password-again string {{ .RootPassword }}
+d-i passwd/user-fullname string admin
+d-i passwd/username string admin
+d-i passwd/user-password string {{ .RootPassword }}
+d-i passwd/user-password-again string {{ .RootPassword }}
+
+d-i partman/mount_style select uuid
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+
+d-i pkgsel/include string openssh-server cloud-init open-vm-tools
+d-i pkgsel/upgrade select none
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/bootdev string default
+
+d-i finish-install/reboot_in_progress note
+"""
+
+# ─────────────────────────── Packer HCL ───────────────────────────
+
+PACKER_HCL = """\
+# Generado por InfraNix — Packer build para template
+packer {{
+  required_plugins {{
+    vmware = {{
+      version = ">= 1.0.0"
+      source  = "github.com/hashicorp/vmware"
+    }}
+  }}
+}}
+
+variable "vcpus" {{ default = {{ .VCPUS }} }}
+variable "memory" {{ default = {{ .MEMORY }} }}
+
+source "{{ .Builder }}" "template" {{
+  # credenciales del hipervisor (desde ^INFRA_* env)
+  username          = "{{ .VMUser }}"
+  password          = "{{ .VMPassword }}"
+  {{ .ConnectionBlock }}
+  iso_url           = "{{ .ISOPath }}"
+  iso_checksum      = "{{ .ISOChecksum }}"
+  ssh_username      = "root"
+  ssh_password      = "{{ .RootPassword }}"
+  ssh_wait_timeout  = "60m"
+  communicator      = "ssh"
+
+  {{ .DataStoreBlock }}
+  guest_os_type     = "{{ .GuestOSType }}"
+  vm_name           = "{{ .TemplateName }}"
+  {{ .FirmwareBlock }}
+  cpus             = var.vcpus
+  memory           = var.memory
+
+  {{ .CdBootPrompt }}
+  boot_command = [
+    {{ .BootCommands }}
+  ]
+
+  boot_wait = "10s"
+  shutdown_command = "/sbin/halt -p"
+  convert_to_template = true
+  template = "{{ .TemplateName }}"
+  vnc_over_websocket = true
+}}
+
+build {{
+  sources = ["source.{{ .Builder }}.template"]
+
+  provisioner "shell" {{
+    inline = [
+      "echo 'Hostkeys && timesync'",
+      "systemctl enable --now chronyd",
+      "systemctl enable --now sshd",
+      "systemctl enable --now cloud-init open-vm-tools",
+    ]
+  }}
+}}
+"""
+
+
+class PackerBuilder:
+    """Genera y ejecuta un build de Packer por imagen."""
+
+    def __init__(self, config: InfraConfig, image: Image,
+                 iso_path: str = "", mirror_base: str = ""):
+        self.config = config
+        self.image = image
+        self.iso_path = iso_path
+        self.mirror_base = mirror_base
+
+    # ── Helpers de configuración ──
+
+    def _builder(self) -> str:
+        # ESXi standalone -> vmware-iso; vCenter -> vsphere-iso
+        if self.config.hypervisor.lower() == "esxi":
+            return "vmware-iso"
+        return "vsphere-iso"
+
+    def _connection_block(self) -> str:
+        if self._builder() == "vmware-iso":
+            return (
+                "remote_type          = \"esx5\"\n"
+                "remote_host          = \"{host}\"\n"
+                "remote_port          = 443\n"
+                "remote_username      = \"{user}\"\n"
+                "remote_password      = \"{password}\"\n"
+                "remote_datastore     = \"{datastore}\"\n"
+                "cache_datastore      = \"{datastore}\"\n"
+                "vnc_bind_address     = \"0.0.0.0\""
+            ).format(host=self.config.host or "",
+                     user=self.config.user or "root",
+                     password=self.config.password or "",
+                     datastore=self.config.datastore or "")
+        # vsphere-iso
+        return (
+            "vcenter_server       = \"{host}\"\n"
+            "vcenter_username     = \"{user}\"\n"
+            "vcenter_password     = \"{password}\"\n"
+            "insecure_connection  = true\n"
+            "datacenter           = \"ha-datacenter\"\n"
+            "cluster              = \"/ha-datacenter/host/HA\"\n"
+            "host                 = \"{host}\""
+        ).format(host=self.config.host or "", user=self.config.user or "",
+                 password=self.config.password or "")
+
+    def _datastore_block(self) -> str:
+        if self._builder() == "vmware-iso":
+            # ya va en remote_datastore
+            return ""
+        return f"datastore = \"{self.config.datastore or 'datastore1'}\""
+
+    def _firmware_block(self) -> str:
+        return 'firmware = "bios"'
+
+    def _guest_os_type(self) -> str:
+        distro = self.image.distro.lower()
+        if distro in ("rhel", "rocky", "centos"):
+            return "rhel9_64Guest"
+        if distro == "ubuntu":
+            return "ubuntu64Guest"
+        if distro == "debian":
+            return "debian11_64Guest"
+        return "other4xLinux64Guest"
+
+    def _boot_commands(self) -> str:
+        """Comandos de arranque según distro (installer en el prompt de boot)."""
+        distro = self.image.distro.lower()
+        # Los <enter> y <tab> son keycodes de Packer
+        if distro in ("rhel", "rocky", "centos"):
+            return (
+                '"<tab> inst.text inst.ks=http://{{.HTTPIP}}:{{.HTTPPort}}/ks.cfg<enter><wait>"'
+            )
+        if distro in ("ubuntu", "debian"):
+            return (
+                '"<enter><wait><wait> install auto url=http://{{.HTTPIP}}:{{.HTTPPort}}/preseed.cfg<enter><wait>"'
+            )
+        return "\"<enter>\""
+
+    def _cd_boot_prompt(self) -> str:
+        # Rocky/CentOS: el ISO bootea a un prompt "boot:" que hay que esperar
+        if self.image.distro.lower() in ("centos",):
+            return 'boot_wait = "5s"'
+        return ""
+
+    def _mirror(self) -> str:
+        return self.mirror_base or "http://localhost/"
+
+    # ── Generación ──
+
+    def generate(self, out_dir: Path, checksum: str = "none") -> Path:
+        """Escribe el packer.pkr.hcl + plantillas de instalación."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # plantillas de instalación desatendida
+        kspath = out_dir / "http" / "ks.cfg"
+        preseed_path = out_dir / "http" / "preseed.cfg"
+        (out_dir / "http").mkdir(parents=True, exist_ok=True)
+
+        distro = self.image.distro.lower()
+        rootpw = "infranix"  # temporario solo para el build; template se clona
+        if distro in ("rhel", "rocky", "centos"):
+            kspath.write_text(
+                self._render_ks(rootpw))
+            boot_prompt = "ks.cfg"
+        else:
+            preseed_path.write_text(
+                self._render_preseed(rootpw))
+            boot_prompt = "preseed.cfg"
+
+        # boot commands que usan la ruta http
+        boot_cmd = self._boot_commands().replace("ks.cfg", boot_prompt).replace(
+            "preseed.cfg", boot_prompt)
+
+        hcl = (PACKER_HCL
+               .replace("{{ .Builder }}", self._builder())
+               .replace("{{ .VCPUS }}", "2")
+               .replace("{{ .MEMORY }}", "4096")
+               .replace("{{ .VMUser }}", self.config.user or "root")
+               .replace("{{ .VMPassword }}", self.config.password or "")
+               .replace("{{ .ConnectionBlock }}", self._connection_block())
+               .replace("{{ .ISOPath }}", self.iso_path or "/tmp/image.iso")
+               .replace("{{ .ISOChecksum }}", checksum)
+               .replace("{{ .RootPassword }}", rootpw)
+               .replace("{{ .DataStoreBlock }}", self._datastore_block())
+               .replace("{{ .GuestOSType }}", self._guest_os_type())
+               .replace("{{ .TemplateName }}", self.image.name)
+               .replace("{{ .FirmwareBlock }}", self._firmware_block())
+               .replace("{{ .CdBootPrompt }}", self._cd_boot_prompt())
+               .replace("{{ .BootCommands }}", boot_cmd))
+        # colapsar llaves estructurales del HCL ({{ }} -> { })
+        hcl = hcl.replace("{{", "{").replace("}}", "}")
+        (out_dir / "packer.pkr.hcl").write_text(hcl)
+        return out_dir
+        (out_dir / "packer.pkr.hcl").write_text(hcl)
+        return out_dir
+
+    def _render_ks(self, rootpw: str) -> str:
+        import hashlib
+        # hash MD5 simple (compatible kickstart) — real: usar openssl passwd -6
+        import crypt
+        hashed = crypt.crypt(rootpw, crypt.mksalt(crypt.METHOD_SHA512))
+        return (KICKSTART_TEMPLATE
+                .replace("{{ .RootPasswordHash }}", hashed)
+                .replace("{{ .Mirror }}", self._mirror()))
+
+    def _render_preseed(self, rootpw: str) -> str:
+        return (PRESEED_TEMPLATE
+                .replace("{{ .HostName }}", self.image.name)
+                .replace("{{ .RootPassword }}", rootpw)
+                .replace("{{ .Mirror }}", self._mirror()))
+
+    # ── Ejecución ──
+
+    def build(self, work_dir: Path) -> bool:
+        """Ejecuta `packer build` en el directorio generado."""
+        import subprocess
+        env = dict()
+        env.update({"PACKER_LOG": "0"})
+        res = subprocess.run(["packer", "init", "."], cwd=str(work_dir),
+                             capture_output=True, text=True, timeout=120)
+        if res.returncode != 0:
+            print(f"packer init: {res.stderr}")
+            return False
+        res = subprocess.run(["packer", "build", "packer.pkr.hcl"],
+                             cwd=str(work_dir), capture_output=True, text=True,
+                             timeout=3600)
+        print(res.stdout[-3000:])
+        if res.returncode != 0:
+            print(f"packer build falló: {res.stderr[-3000:]}")  # noqa: E501
+            return False
+        return True

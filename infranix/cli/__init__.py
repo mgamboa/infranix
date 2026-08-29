@@ -18,7 +18,7 @@ from pathlib import Path
 import click
 import yaml
 
-from infranix.config import load_config, write_config_template
+from infranix.config import load_config, write_config_template, resolve_vars
 from infranix.adapters.discovery import make_scanner
 from infranix.core.planner import Planner, ChangeKind
 from infranix.core.safety import SafetyGate
@@ -34,6 +34,7 @@ def _load_manifest(path: str) -> Manifest:
             data = yaml.safe_load(f)
     except FileNotFoundError:
         raise click.ClickException(f"Manifiesto no encontrado: {path}")
+    data = resolve_vars(data)
     return Manifest(**data)
 
 
@@ -135,7 +136,7 @@ def plan(file_path: str, out_dir: str):
     # Generación de artefactos (solo si el plan es aprobado)
     try:
         datastore = inventory.datastores[0].name if inventory.datastores else "delldatastore"
-        cluster_host = inventory.compute_cluster_host or "dellserver01.itmco.local"
+        cluster_host = inventory.compute_cluster_host or "esxi01.example.local"
         tf_gen = TerraformGenerator(
             manifest,
             Path(out_dir) / "terraform",
@@ -241,7 +242,7 @@ def apply(file_path: str, yes: bool, out_dir: str, skip_apply: bool):
 
     # 2) Generar Terraform + Ansible
     datastore = inventory.datastores[0].name if inventory.datastores else "delldatastore"
-    cluster_host = inventory.compute_cluster_host or "dellserver01.itmco.local"
+    cluster_host = inventory.compute_cluster_host or "esxi01.example.local"
     tf_dir = Path(out_dir) / "terraform"
     TerraformGenerator(
         manifest, tf_dir,
@@ -330,6 +331,74 @@ def destroy(file_path: str, yes: bool):
 
 
 @cli.group()
+def collection():
+    """Gestión de colecciones (plugins): listar, habilitar, deshabilitar."""
+
+
+@collection.command("list")
+def collection_list():
+    """Lista las colecciones descubiertas y su estado."""
+    from infranix.core.registry import get_registry
+    registry = get_registry().discover()
+    rows = []
+    for rec in registry.all():
+        mark = "✗" if not registry.is_enabled(rec.name) else "✓"
+        source = "entry-point" if rec.installed else "builtin"
+        rows.append(click.style(f"{mark}", bold=True) + f" {rec.name} v{rec.version} [{source}]")
+        caps = ", ".join(sorted(c.name for c in rec.capabilities))
+        click.echo(f"  {rows[-1]}")
+        click.echo(f"      capabilities: {caps}")
+        if rec.description:
+            click.echo(f"      {rec.description}")
+    if not rows:
+        click.echo("Ninguna colección descubierta.")
+
+
+@collection.command("enable")
+@click.argument("name")
+def collection_enable(name: str):
+    """Habilita una colección (p.ej. packer)."""
+    from infranix.core.registry import get_registry
+    registry = get_registry()
+    if registry.enable(name):
+        click.echo(f"Colección '{name}' habilitada.")
+    else:
+        raise click.ClickException(f"Colección '{name}' no encontrada. Ver 'infra collection list'.")
+
+
+@collection.command("disable")
+@click.argument("name")
+def collection_disable(name: str):
+    """Deshabilita una colección sin desinstalarla.
+
+    El core sigue funcionando sin ella (p.ej. si Packer está roto).
+    """
+    from infranix.core.registry import get_registry
+    registry = get_registry()
+    if registry.disable(name):
+        click.echo(f"Colección '{name}' deshabilitada. Core sigue operativo.")
+    else:
+        raise click.ClickException(f"Colección '{name}' no encontrada. Ver 'infra collection list'.")
+
+
+@collection.command("install")
+@click.argument("pkg")
+def collection_install(pkg: str):
+    """Instala una colección desde PyPI/GitHub (pip install).
+
+    La colección debe declarar el entry point 'infranix.collections'.
+    """
+    import subprocess as sp
+    click.echo(f"Instalando colección: {pkg}")
+    res = sp.run([sys.executable, "-m", "pip", "install", pkg],
+                 capture_output=True, text=True)
+    if res.returncode != 0:
+        raise click.ClickException(res.stderr[-1200:])
+    get_registry().discover()
+    click.echo("Instalada. Ver 'infra collection list'.")
+
+
+@cli.group()
 def image():
     """Gestión de imágenes/templates (Image Manager)."""
 
@@ -358,6 +427,28 @@ def image_ensure(file_path: str, name: str | None):
                            available_remotes=inventory.images)
         icon = {"none": "[=]", "uploaded": "[+]", "template-required": "[★]",
                 "downloading": "[↓]"}.get(result.action, "[?]")
+        click.echo(f"  {icon} {result.message}")
+
+
+@image.command("build")
+@click.option("-f", "--file", "file_path", default="infra.yaml")
+@click.option("--name", "name", default=None, help="Nombre de imagen (default: todas del manifest)")
+def image_build(file_path: str, name: str | None):
+    """Construye templates clonables con Packer desde el ISO en cache.
+
+    Requiere que el ISO ya esté en la cache local (ver 'image ensure').
+    Genera kickstart/preseed, ejecuta Packer y deja un template en el ESXi.
+    """
+    manifest = _load_manifest(file_path)
+    config = load_config()
+
+    im = ImageManager(config)
+    for img in manifest.images:
+        if name and img.name != name:
+            continue
+        click.echo(f"Imagen: {img.name} ({img.distro} {img.version})")
+        result = im.build_template(img.name, img.distro, img.version)
+        icon = {"template-ready": "[+]", "none": "[!]"}.get(result.action, "[?]")
         click.echo(f"  {icon} {result.message}")
 
 

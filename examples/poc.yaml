@@ -1,8 +1,9 @@
-# Manifiesto de ejemplo — despliegue seguro de una VM nueva
-# NO toca ninguna infraestructura existente. Solo crea web-prod-01.
+# Ejemplo: despliegue de una VM declarado con variables dinámicas.
+# Los ${VAR} se resuelven en tiempo de ejecución desde el entorno o
+# ~/.infranix/.env  (ver docs/MANUAL.md, sección de Variables).
 version: 1
 project: infranix-poc
-hypervisor: esxi
+hypervisor: ${INFRA_HYPERVISOR}
 
 scan_before_apply: true
 safety:
@@ -10,13 +11,15 @@ safety:
   allow_downtime: false
 
 images:
-  - { name: rhel-9.5, distro: rhel, version: "9.5" }
+  - name: rhel-9.5
+    distro: rhel
+    version: "9.5"
 
 networks:
-  - name: VM Network
+  - name: ${INFRA_NETWORK}
     type: portgroup
-    subnet: 192.168.2.0/24
-    gateway: 192.168.2.1
+    subnet: ${POC_SUBNET}
+    gateway: ${POC_GATEWAY}
 
 servers:
   - name: web-prod-01
@@ -25,6 +28,9 @@ servers:
     mem: 4096
     disk: 40
     network:
-      - { name: "VM Network", ip: 192.168.2.150/24, gateway: 192.168.2.1, dns: [192.168.2.1] }
+      - name: ${INFRA_NETWORK}
+        ip: ${POC_IP}
+        gateway: ${POC_GATEWAY}
+        dns: [${POC_DNS}]
     roles: [webserver]
     action: create

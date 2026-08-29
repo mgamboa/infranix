@@ -117,9 +117,9 @@ servers:
     disk: 100
     network:
       - name: prod-net
-        ip: 192.168.10.10/24
-        gateway: 192.168.10.1
-        dns: [192.168.10.5]
+        ip: ${SERVER_IP}
+        gateway: ${GATEWAY}
+        dns: [${DNS}]
     roles:            # lo que Ansible debe instalar/configurar
       - webserver
       - monitoring-agent
@@ -130,8 +130,8 @@ networks:
   - name: prod-net
     type: portgroup    # portgroup | dvswitch | vlan
     vlan: 100
-    subnet: 192.168.10.0/24
-    gateway: 192.168.10.1
+    subnet: ${SUBNET}
+    gateway: ${GATEWAY}
     dhcp: false
 
 # ROUTERS VIRTUALES

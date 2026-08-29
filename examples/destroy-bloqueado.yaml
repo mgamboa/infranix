@@ -1,17 +1,18 @@
-# Demuestra el bloqueo de destrucción por el Safety Gate
+# Demonstrates Safety Gate blocking destruction without explicit opt-in.
+# No real IPs/hosts here — hypervisor comes from ${INFRA_*}. vars.
 version: 1
 project: demo-destroy
-hypervisor: esxi
+hypervisor: ${INFRA_HYPERVISOR}
 
 safety:
-  destroy: false          # <-- bloquea toda destrucción
+  destroy: false          # <-- blocks all destruction
   allow_downtime: false
 
 servers:
-  - name: Client          # VM existente real en el ESXi
-    image: rhel-9.5
+  - name: ${TARGET_VM}
+    image: ${TARGET_IMAGE}
     cpu: 4
     mem: 8192
     disk: 20
     roles: []
-    action: destroy       # intento de destruir -> debe bloquearse
+    action: destroy       # attempt to destroy -> must be blocked

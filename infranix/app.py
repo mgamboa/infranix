@@ -17,7 +17,7 @@ from typing import Optional
 
 import yaml
 
-from infranix.config import InfraConfig, load_config
+from infranix.config import InfraConfig, load_config, resolve_vars
 from infranix.adapters.discovery import Inventory, make_scanner
 from infranix.core.planner import Planner, Plan, ChangeKind
 from infranix.core.safety import SafetyGate, SafetyReport
@@ -74,6 +74,7 @@ class InfraNix:
     def load_manifest(path) -> Manifest:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
+        data = resolve_vars(data)
         return Manifest(**data)
 
     def _scan(self) -> Inventory:
@@ -138,7 +139,7 @@ class InfraNix:
             datastore = (inventory.datastores[0].name
                          if inventory.datastores else "delldatastore")
             cluster_host = (inventory.compute_cluster_host
-                            or "dellserver01.itmco.local")
+                            or "esxi01.example.local")
             tf_dir = Path(out_dir) / "terraform"
             TerraformGenerator(
                 manifest, tf_dir, datastore=datastore,

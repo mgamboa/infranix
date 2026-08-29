@@ -8,6 +8,7 @@ que puede ser suplida con un adaptador mock cuando no hay accesso real.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -16,6 +17,8 @@ from dataclasses import dataclass, field
 
 DOTENV_PATH = Path.home() / ".infranix" / ".env"
 CONFIG_DIR = Path.home() / ".infranix"
+
+VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @dataclass
@@ -87,7 +90,7 @@ def write_config_template() -> Path:
         example = (
             "# InfraNix credentials (local only, never commit)\n"
             "INFRA_HYPERVISOR=esxi\n"
-            "INFRA_HOST=192.168.x.x\n"
+            "INFRA_HOST=your-esxi-ip\n"
             "INFRA_USER=root\n"
             "INFRA_PASSWORD=\n"
             "INFRA_DATACENTER=\n"
@@ -97,3 +100,44 @@ def write_config_template() -> Path:
         )
         DOTENV_PATH.write_text(example)
     return DOTENV_PATH
+
+
+def _env_for_vars() -> dict[str, str]:
+    """Env combinado (variables de entorno solo informe) para ${VAR}."""
+    merged = dict(os.environ)
+    merged.update(_load_dotenv(DOTENV_PATH))
+    return merged
+
+
+def resolve_vars(value: Any, env: Optional[dict[str, str]] = None,
+                 missing: str = "keep") -> Any:
+    """Sustituye ${VAR} en strings/estructuras del manifiesto.
+
+    `env` fué un dict combinado (os.environ + .env). Si una variable no existe
+    y `missing='keep'` se deja igual, si 'empty' se vuelve '', si 'error' se
+    lanza ValueError.
+    """
+    if env is None:
+        env = _env_for_vars()
+
+    if isinstance(value, str):
+        def _sub(m: re.Match) -> str:
+            key = m.group(1)
+            if key in env:
+                return env[key]
+            if missing == "empty":
+                return ""
+            if missing == "error":
+                raise ValueError(
+                    f"Variable no definida: ${{{key}}}. "
+                    f"Definela en ~/.infranix/.env o en el entorno.")
+            return m.group(0)
+        return VAR_PATTERN.sub(_sub, value)
+
+    if isinstance(value, dict):
+        return {k: resolve_vars(v, env, missing) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [resolve_vars(v, env, missing) for v in value]
+
+    return value

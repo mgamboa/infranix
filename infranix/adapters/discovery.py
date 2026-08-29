@@ -235,7 +235,7 @@ class MockScanner(Scanner):
             "os_version": "8.0.3",
             "vms": [
                 {"name": "web-prod-01", "power_state": "poweredOn", "cpu": 4,
-                 "mem_mb": 8192, "guest_os": "RHEL 9", "ip": "192.168.0.10"},
+                 "mem_mb": 8192, "guest_os": "RHEL 9", "ip": "10.0.0.10"},
             ],
             "datastores": [
                 {"name": "datastore1", "type": "VMFS", "capacity_bytes": 10**12,
