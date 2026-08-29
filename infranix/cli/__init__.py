@@ -53,32 +53,11 @@ def cli():
 
 
 @cli.command()
-@click.argument("name", default="my_project")
-@click.option("-o", "--out", "out_dir", default=".")
-def init(name: str, out_dir: str):
-    """Initialize an InfraNix project.
-
-    Creates a folder with the standard layout for the application:
-      <name>/collections/requirements.yml   collections `infra` reads
-      <name>/defaults/main.yml              default variables
-      <name>/infra/infra.yaml               the InfraNix manifest to run
-    """
-    import infranix.skeleton as skeleton
-    from pathlib import Path as _P
-    root = skeleton.init_project(name, _P(out_dir))
-    click.echo(f"InfraNix project '{name}' created at {root}")
-    click.echo("  collections/requirements.yml - collections infra will install")
-    click.echo("  defaults/main.yml           - your variables (live here)")
-    click.echo("  infra/infra.yaml            - the manifest to execute")
-    click.echo(f"Run: infra project run {name}")
-
-
-@cli.command()
 def scan():
     """Describe the current hypervisor infrastructure (read-only)."""
     config = load_config()
     if not config.configured and config.hypervisor != "mock":
-        click.echo("No credentials. Create a project with 'infra init <name>', "
+        click.echo("No credentials. Create a project with 'infra project init <name>', "
                    "set variables in defaults/main.yml, or use INFRA_HYPERVISOR=mock.")
         sys.exit(1)
 

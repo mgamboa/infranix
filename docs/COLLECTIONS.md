@@ -29,7 +29,7 @@ link in the table above — each collection's `README.md` documents its options
 and ends with an example.
 
 ```bash
-infra init <name>                   # create an InfraNix project scaffold
+infra project init <name>           # create an InfraNix project scaffold
 infra project ...                   # project management (init | run | vault)
 infra scan                          # show current hypervisor state (read-only)
 infra collection ...                # collection management (see below)
@@ -128,7 +128,7 @@ process env still wins; project defaults win over `~/.infranix/.env`), installs
 any collection in `collections/requirements.yml`, and runs the manifest.
 
 ```bash
-infra init satellite                  # scaffold
+infra project init satellite          # scaffold
 # edit satellite/defaults/main.yml with your variables
 infra project run satellite --apply   # provision + configure
 ```

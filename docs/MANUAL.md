@@ -330,7 +330,6 @@ load_balancers:
 | `infra image ensure -f infra.yaml` | Ensures images (downloads missing ones) |
 | `infra image build -f infra.yaml` | Builds cloneable templates via Packer collection |
 | `infra destroy -f infra.yaml --yes` | Destroys (requires opt-in) |
-| `infra init <name>` | Creates an InfraNix project scaffold (variables live in its `defaults/main.yml`) |
 | `infra project init <name>` | Scaffold an InfraNix project (`collections/`, `defaults/`, `infra/`) |
 | `infra project run <name>` | Run the project: reads its `defaults/main.yml` + `collections/requirements.yml`, executes `infra/infra.yaml` |
 | `infra project vault encrypt <path> [-k KEY]` | Encrypt sensitive values in a YAML file (vault) |
