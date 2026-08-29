@@ -100,6 +100,7 @@ per-user, local to the machine and ignored by git — never committed.
 ## Documentation
 
 - **[docs/MANUAL.md](docs/MANUAL.md)** — How to declare things in the YAML.
+- **[docs/COLLECTIONS.md](docs/COLLECTIONS.md)** — Every collection's options + the full CLI reference, with examples.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — How the system is structured.
 
 ## Project structure
