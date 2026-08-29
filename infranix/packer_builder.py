@@ -294,7 +294,7 @@ class PackerBuilder:
                .replace("{{ .MEMORY }}", "4096")
                .replace("{{ .Host }}", self.config.host or "localhost")
                .replace("{{ .VMUser }}", self.config.user or "root")
-               .replace("{{ .VMPassword }}", self.config.password or "")
+               .replace("{{ .VMPassword }}", (self.config.password or "").replace("%29", ")"))
                .replace("{{ .ISOPath }}", self.iso_path or "/tmp/image.iso")
                .replace("{{ .RootPassword }}", rootpw)
                .replace("{{ .Datastore }}", datastore)
