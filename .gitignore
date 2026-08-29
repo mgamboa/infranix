@@ -1,0 +1,17 @@
+# artefactos generados
+out/
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.terraform.lock.hcl
+
+# credenciales / secretos
+.env
+*.env
+infranix-credentials*
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/

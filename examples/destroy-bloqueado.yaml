@@ -1,0 +1,17 @@
+# Demuestra el bloqueo de destrucción por el Safety Gate
+version: 1
+project: demo-destroy
+hypervisor: esxi
+
+safety:
+  destroy: false          # <-- bloquea toda destrucción
+  allow_downtime: false
+
+servers:
+  - name: Client          # VM existente real en el ESXi
+    image: rhel-9.5
+    cpu: 4
+    mem: 8192
+    disk: 20
+    roles: []
+    action: destroy       # intento de destruir -> debe bloquearse

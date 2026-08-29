@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Arrancador de InfraNix que no requiere instalación (editable).
+Agrega el workspace al sys.path y ejecuta el CLI.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from infranix.cli import cli
+
+if __name__ == "__main__":
+    cli()
