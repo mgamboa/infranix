@@ -218,6 +218,16 @@ class CollectionRegistry:
                     messages.append(f"ERROR installing '{req.name}' from {req.path}: {e}")
                 continue
 
+            # ansible-galaxy collection install
+            if req.source == CollectionSource.GALAXY:
+                try:
+                    self._install_galaxy(req.name)
+                    messages.append(f"collection '{req.name}' installed (galaxy).")
+                    self.discover()
+                except Exception as e:
+                    messages.append(f"ERROR installing '{req.name}' (galaxy): {e}")
+                continue
+
             # pip install
             pkg = self._pip_pkg_name(req)
             try:
@@ -272,6 +282,19 @@ class CollectionRegistry:
                 capture_output=True, text=True)
             if res.returncode != 0:
                 raise RuntimeError(res.stderr[-500:].strip())
+
+    @staticmethod
+    def _install_galaxy(name: str) -> None:
+        """Install an Ansible Galaxy collection with ansible-galaxy."""
+        import subprocess
+        import shutil
+        if shutil.which("ansible-galaxy") is None:
+            raise RuntimeError("'ansible-galaxy' not found in PATH.")
+        res = subprocess.run(
+            ["ansible-galaxy", "collection", "install", name],
+            capture_output=True, text=True, timeout=900)
+        if res.returncode != 0:
+            raise RuntimeError(res.stderr[-500:].strip())
 
 
 def _make_record(provider_cls: type[PluginProvider],

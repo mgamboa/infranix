@@ -348,6 +348,14 @@ class AnsibleGenerator:
             t_dir.mkdir(parents=True, exist_ok=True)
             (t_dir / "main.yml").write_text(tasks)
 
+        # ── ansible.cfg (enable YAML inventory plugin, disable host key check) ──
+        (base / "ansible.cfg").write_text(
+            "[inventory]\n"
+            "enable_plugins = yaml, host_list, script, auto\n\n"
+            "[defaults]\n"
+            "host_key_checking = False\n"
+        )
+
         # ── Galaxy requirements (Ansible collections the roles need) ──
         colls = galaxy_collections(self.manifest)
         galaxy_dir = base / "galaxy"

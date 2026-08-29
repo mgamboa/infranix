@@ -196,6 +196,11 @@ PROJECT_REQUIREMENTS_YML = """\
 # Collections this project needs. `infra` reads this file and auto-installs any
 # missing collection before executing infra/infra.yaml (like ansible-galaxy
 # installing requirements.yml). Add entries here as needed.
+#
+# source: builtin  — InfraNix built-in collections (vmware, terraform, ansible)
+# source: galaxy   — Ansible Galaxy collections (community.general, redhat.satellite)
+# source: pip      — Python packages from PyPI
+# source: archive  — local tar.gz file (set `path:` to the file)
 
 collections:
   - name: vmware

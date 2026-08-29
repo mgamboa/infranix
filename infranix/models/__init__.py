@@ -162,6 +162,7 @@ class CollectionSource(str, Enum):
     BUILTIN = "builtin"      # ships inside the infranix package
     PIP = "pip"              # pip install (PyPI, git, url)
     ARCHIVE = "archive"      # local tar.gz unzipped/installed by the user
+    GALAXY = "galaxy"        # ansible-galaxy collection install
 
 
 class CollectionRequirement(BaseModel):
