@@ -1,8 +1,8 @@
-"""Configuración segura de InfraNix.
+"""Secure configuration for InfraNix.
 
-Las credenciales viven en ~/.infranix/.env (nunca en el repo).
-Este módulo las lee de forma opcional y devuelve una configuración
-que puede ser suplida con un adaptador mock cuando no hay accesso real.
+Credentials live in ~/.infranix/.env (never in the repo).
+This module reads them optionally and returns a configuration
+that can be supplied via a mock adapter when there is no real access.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 @dataclass
 class InfraConfig:
-    """Configuración global de InfraNix leída desde el entorno."""
+    """Global InfraNix configuration read from the environment."""
 
     hypervisor: str = "esxi"          # vcenter | esxi | proxmox | kvm | mock
     host: Optional[str] = None
@@ -34,7 +34,7 @@ class InfraConfig:
     network: Optional[str] = None
     insecure: bool = True
 
-    # Cache de imágenes
+    # Image cache
     image_cache: Path = CONFIG_DIR / "images"
 
     @property
@@ -43,7 +43,7 @@ class InfraConfig:
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:
-    """Carga variables KEY=VALUE desde un archivo .env simple."""
+    """Load KEY=VALUE variables from a simple .env file."""
     if not path.exists():
         return {}
     env: dict[str, str] = {}
@@ -57,9 +57,9 @@ def _load_dotenv(path: Path) -> dict[str, str]:
 
 
 def load_config() -> InfraConfig:
-    """Carga la configuración desde ~/.infranix/.env (crea directorio si falta).
+    """Load configuration from ~/.infranix/.env (creates dir if missing).
 
-    Prioridad: .env > variables de entorno > defaults.
+    Priority: .env > environment variables > defaults.
     """
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     file_env = _load_dotenv(DOTENV_PATH)
@@ -84,7 +84,7 @@ def load_config() -> InfraConfig:
 
 
 def write_config_template() -> Path:
-    """Escribe un .env de ejemplo (sin credenciales) si no existe."""
+    """Write an example .env (no credentials) if it does not exist."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not DOTENV_PATH.exists():
         example = (
@@ -103,7 +103,7 @@ def write_config_template() -> Path:
 
 
 def _env_for_vars() -> dict[str, str]:
-    """Env combinado (variables de entorno solo informe) para ${VAR}."""
+    """Combined env (informative environment variables only) for ${VAR}."""
     merged = dict(os.environ)
     merged.update(_load_dotenv(DOTENV_PATH))
     return merged
@@ -111,11 +111,11 @@ def _env_for_vars() -> dict[str, str]:
 
 def resolve_vars(value: Any, env: Optional[dict[str, str]] = None,
                  missing: str = "keep") -> Any:
-    """Sustituye ${VAR} en strings/estructuras del manifiesto.
+    """Substitute ${VAR} in manifest strings/structures.
 
-    `env` fué un dict combinado (os.environ + .env). Si una variable no existe
-    y `missing='keep'` se deja igual, si 'empty' se vuelve '', si 'error' se
-    lanza ValueError.
+    `env` is a combined dict (os.environ + .env). If a variable does not exist
+    and `missing='keep'` it is left as-is, if 'empty' it becomes '', if 'error'
+    a ValueError is raised.
     """
     if env is None:
         env = _env_for_vars()
@@ -129,8 +129,8 @@ def resolve_vars(value: Any, env: Optional[dict[str, str]] = None,
                 return ""
             if missing == "error":
                 raise ValueError(
-                    f"Variable no definida: ${{{key}}}. "
-                    f"Definela en ~/.infranix/.env o en el entorno.")
+                    f"Variable not defined: ${{{key}}}. "
+                    f"Set it in ~/.infranix/.env or in the environment.")
             return m.group(0)
         return VAR_PATTERN.sub(_sub, value)
 

@@ -1,18 +1,18 @@
-"""Image Manager — Fase 3.
+"""Image Manager — Phase 3.
 
-Resuelve la disponibilidad de imágenes/templates solicitadas por el manifiesto.
+Resolves the availability of images/templates requested by the manifest.
 
-Flujo cuando una imagen no está disponible en el hypervisor:
-  1. Resolver la fuente de descarga (mirror oficial por distro+versión).
-  2. Descargar el ISO/OVA/cloud-image a un cache local (~/.infranix/images).
-  3. Subirlo al datastore del ESXi (carpeta 'ISO') usando govc.
-  4. Registrar en el catálogo local para evitar re-descargas.
+Flow when an image is not available on the hypervisor:
+  1. Resolve the download source (official mirror by distro+version).
+  2. Download the ISO/OVA/cloud-image to a local cache (~/.infranix/images).
+  3. Upload it to the ESXi datastore (the 'ISO' folder) using govc.
+  4. Register it in the local catalog to avoid re-downloads.
 
-En fases posteriores: construir un template booteable/clonable con Packer
-(kickstart / cloud-init / autounattend) para que Terraform lo cloné.
+In later phases: build a bootable/cloneable template with Packer
+(kickstart / cloud-init / autounattend) so that Terraform can clone it.
 
-Esto resuelve tu requerimiento clave: si la versión de Linux pedida no está
-en el hypervisor, el sistema la baja y la sube para hacerla disponible.
+This solves your key requirement: if the requested Linux version is not
+on the hypervisor, the system downloads and uploads it to make it available.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ from infranix.adapters.discovery import ESXiScanner
 from infranix.models import Image
 
 
-# ─────────────────────────── Fuentes de descarga ───────────────────────────
+# ─────────────────────────── Download sources ───────────────────────────
 
-# Cada resolver devuelve la URL más probable del ISO para (distro, version).
+# Each resolver returns the most probable ISO URL for (distro, version).
 def _rocky(distro: str, version: str) -> str:
     # Rocky mirrors: https://dl.rockylinux.org/pub/rocky/<ver>/isos/x86_64/
     return (f"https://dl.rockylinux.org/pub/rocky/{version}/isos/x86_64/"
@@ -41,8 +41,8 @@ def _rocky(distro: str, version: str) -> str:
 
 
 def _rhel(distro: str, version: str) -> Optional[str]:
-    # RHEL requiere suscripción; los ISOs no son de descarga pública libre.
-    # Se usa un mirror interno (p. ej. la ISO que ya está en el datastore).
+    # RHEL requires a subscription; the ISOs are not free for public download.
+    # An internal mirror is used (e.g. the ISO already on the datastore).
     return None
 
 
@@ -72,13 +72,13 @@ RESOLVERS: dict[str, Callable[[str, str], Optional[str]]] = {
 
 @dataclass
 class ImageRecord:
-    """Registro de una imagen gestionada por el Image Manager."""
+    """Record of an image managed by the Image Manager."""
     name: str              # 'rhel-9.5'
     distro: str            # 'rhel'
     version: str           # '9.5'
     source_url: str = ""
     local_path: Optional[Path] = None
-    datastore_path: Optional[str] = None  # ej: /ISO/rhel-9.5.iso
+    datastore_path: Optional[str] = None  # e.g. /ISO/rhel-9.5.iso
     status: str = "unknown"  # missing | downloading | available | template-ready
 
 
@@ -90,7 +90,7 @@ class ImageManagerResult:
 
 
 class ImageManager:
-    """Gestiona la disponibilidad de imágenes en el hypervisor."""
+    """Manages the availability of images on the hypervisor."""
 
     def __init__(self, config: InfraConfig):
         self.config = config
@@ -98,7 +98,7 @@ class ImageManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.catalog_file = self.cache_dir / "catalog.json"
 
-    # ── Catálogo local (evita re-descargar) ──
+    # ── Local catalog (avoids re-downloading) ──
     def _load_catalog(self) -> dict:
         import json
         if self.catalog_file.exists():
@@ -109,24 +109,24 @@ class ImageManager:
         import json
         self.catalog_file.write_text(json.dumps(catalog, indent=2))
 
-    # ── Resolución de URL ──
+    # ── URL resolution ──
     def resolve_source(self, distro: str, version: str) -> str:
         resolver = RESOLVERS.get(distro.lower())
         if not resolver:
-            raise ValueError(f"No hay resolver para distro '{distro}'")
+            raise ValueError(f"No resolver for distro '{distro}'")
         url = resolver(distro.lower(), version)
         if not url:
             raise ValueError(
-                f"RHEL {version} requiere suscripción; usa un mirror interno "
-                f"(p. ej. el ISO rhel-{version} ya subido al datastore).")
+                f"RHEL {version} requires a subscription; use an internal mirror "
+                f"(e.g. the rhel-{version} ISO already uploaded to the datastore).")
         return url
 
-    # ── Descarga ──
+    # ── Download ──
     def _download(self, url: str, dest: Path) -> Path:
         if dest.exists() and dest.stat().st_size > 0:
             return dest
         dest.parent.mkdir(parents=True, exist_ok=True)
-        print(f"    Descargando {url} ...")
+        print(f"    Downloading {url} ...")
         with requests.get(url, stream=True, timeout=(30, 600), allow_redirects=True) as r:
             r.raise_for_status()
             total = int(r.headers.get("Content-Length", 0))
@@ -141,7 +141,7 @@ class ImageManager:
                             print(f"      {pct}%")
         return dest
 
-    # ── Subir al datastore via govc ──
+    # ── Upload to the datastore via govc ──
     def _upload_iso(self, local_path: Path, target_name: str) -> str:
         url = (f"https://root:{self.config.password}@{self.config.host}/sdk")
         env = dict(os.environ)
@@ -152,23 +152,23 @@ class ImageManager:
             ["govc", "datastore.upload", str(local_path), dst],
             capture_output=True, text=True, env=env, timeout=1800)
         if res.returncode != 0:
-            raise RuntimeError(f"govc datastore.upload falló: {res.stderr.strip()}")
+            raise RuntimeError(f"govc datastore.upload failed: {res.stderr.strip()}")
         return f"/{dst}"
 
-    # ── Orquestación principal ──
+    # ── Main orchestration ──
     def ensure(self, name: str, distro: str, version: str,
                available_remotes: Optional[list[str]] = None) -> ImageManagerResult:
-        """Asegura que la imagen pedida esté disponible en el hypervisor.
+        """Ensure the requested image is available on the hypervisor.
 
-        available_remotes: nombres de ISO ya presentes en el datastore.
-        Si la imagen (por distro+versión) ya existe como ISO remoto, se
-        considera disponible sin descargar.
+        available_remotes: names of ISOs already present on the datastore.
+        If the image (by distro+version) already exists as a remote ISO, it is
+        considered available without downloading.
         """
         record = ImageRecord(name=name, distro=distro, version=version)
         catalog = self._load_catalog()
         cached = catalog.get(name)
 
-        # 1) ¿Ya hay un ISO remoto en el datastore que matchee distro+version?
+        # 1) Is there already a remote ISO on the datastore matching distro+version?
         if available_remotes:
             match = self._match_remote(available_remotes, distro, version)
             if match:
@@ -176,24 +176,24 @@ class ImageManager:
                 record.status = "available"
                 return ImageManagerResult(
                     record, "none",
-                    f"imagen '{name}' ya disponible en datastore como '{match}'.")
+                    f"image '{name}' already available on the datastore as '{match}'.")
 
-        # 2) ¿Está en el catálogo local (ya descargado/subido antes)?
+        # 2) Is it in the local catalog (already downloaded/uploaded before)?
         if cached and cached.get("datastore_path"):
             record = ImageRecord(**cached)
             record.status = "available"
             return ImageManagerResult(
                 record, "none",
-                f"imagen '{name}' en catálogo: {cached['datastore_path']}.")
+                f"image '{name}' in catalog: {cached['datastore_path']}.")
 
-        # 3) Descargar + subir
+        # 3) Download + upload
         try:
             url = self.resolve_source(distro, version)
         except ValueError as e:
             record.status = "template-required"
             return ImageManagerResult(
                 record, "template-required",
-                f"Sin fuente libre para {distro} {version}: {e}")
+                f"No free source for {distro} {version}: {e}")
 
         local_name = self._iso_local_name(name, distro, version)
         local_path = self.cache_dir / local_name
@@ -202,7 +202,7 @@ class ImageManager:
         except Exception as e:
             record.status = "missing"
             return ImageManagerResult(record, "none",
-                                      f"Error descargando: {e}")
+                                      f"Download error: {e}")
 
         try:
             remote = self._upload_iso(local_path, local_name)
@@ -213,16 +213,16 @@ class ImageManager:
             self._save_catalog(catalog)
             return ImageManagerResult(
                 record, "uploaded",
-                f"Imagen '{name}' descargada y subida a {remote}.")
+                f"Image '{name}' downloaded and uploaded to {remote}.")
         except Exception as e:
             record.status = "downloading"
             return ImageManagerResult(record, "none",
-                                      f"Subida falló (descarga en cache): {e}")
+                                      f"Upload failed (download cached): {e}")
 
-    # ── Heurística de matching ──
+    # ── Matching heuristic ──
     @staticmethod
     def _match_remote(remotes: list[str], distro: str, version: str) -> Optional[str]:
-        """Busca un ISO cuyo nombre contenga la distro Y la versión."""
+        """Find an ISO whose name contains the distro AND the version."""
         d = ImageManager._norm(distro)
         v = ImageManager._norm(version)
         if not d or not v:
@@ -242,14 +242,14 @@ class ImageManager:
         safe = re.sub(r"[^a-z0-9.-]", "-", name.lower())
         return f"{safe}-{distro}{version}.iso"
 
-    # ── Construcción de template con Packer (vía colección BUILD) ──
+    # ── Template build with Packer (via the BUILD collection) ──
     def build_template(self, name: str, distro: str, version: str,
                        checksum: str = "none") -> ImageManagerResult:
-        """Construye un template clonable a partir del ISO (Packer).
+        """Build a cloneable template from the ISO (Packer).
 
-        Requiere que el ISO esté en la cache local (asegurado con `ensure`).
-        La lógica vive en la colección con capability BUILD: el core solo
-        delega a través del protocolo, no importa internals de Packer.
+        Requires the ISO to be in the local cache (ensured with `ensure`).
+        The logic lives in the collection with the BUILD capability: the core
+        only delegates through the protocol, it does not import Packer internals.
         """
         from infranix.core.registry import get_registry
         from infranix.pluginbase import Capability, PluginContext
@@ -261,15 +261,15 @@ class ImageManager:
         if not local_path.exists():
             return ImageManagerResult(
                 record, "none",
-                f"ISO '{local_name}' no está en cache. Ejecuta 'infra image ensure' "
-                f"primero (o setea la cache en ~/.infranix/images).")
+                f"ISO '{local_name}' is not in cache. Run 'infra image ensure' "
+                f"first (or set the cache in ~/.infranix/images).")
 
         provider = get_registry().resolve(Capability.BUILD)
         if provider is None:
             return ImageManagerResult(
                 record, "none",
-                "Ninguna colección con capability BUILD habilitada. "
-                "Revisa 'infra collection list' (Packer).")
+                "No collection with the BUILD capability enabled. "
+                "Check 'infra collection list' (Packer).")
 
         image = Image(name=name, distro=distro, version=version,
                       build={"builder": "packer"})
@@ -288,6 +288,6 @@ class ImageManager:
             self._save_catalog(catalog)
             return ImageManagerResult(
                 record, "template-ready",
-                f"Template '{name}' construido con Packer y listo para clonar.")
+                f"Template '{name}' built with Packer and ready to clone.")
         return ImageManagerResult(
             record, "none", report.message)

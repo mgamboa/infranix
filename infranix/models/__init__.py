@@ -1,7 +1,7 @@
-"""Modelos Pydantic que definen el schema del manifiesto declarativo.
+"""Pydantic models that define the declarative manifest schema.
 
-El schema cubre: servidores (VMs), redes, routers, load balancers, imágenes
-y políticas de seguridad. Es el contrato que valida todo manifiesto YAML.
+The schema covers: servers (VMs), networks, routers, load balancers, images
+and safety policies. It is the contract that validates every YAML manifest.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, model_validator
 
 
 # ─────────────────────────── Enums ───────────────────────────
-
 class Hypervisor(str, Enum):
     VSPHERE = "vsphere"
     VCENTER = "vcenter"
@@ -62,18 +61,18 @@ class ServerAction(str, Enum):
 
 
 class Capability(str, Enum):
-    """Qué puede hacer una colección."""
-    SCAN = "scan"            # discovery/estado actual del hypervisor
-    PROVISION = "provision"  # crear/actualizar recursos (Terraform, cloud-init...)
-    CONFIGURE = "configure"  # configurar el software dentro de las VMs (Ansible)
-    IMAGE = "image"          # descargar/subir imágenes (ISO/OVA/cloud-image)
-    BUILD = "build"          # construir templates (Packer)
+    """What a collection can do."""
+    SCAN = "scan"            # discovery / current hypervisor state
+    PROVISION = "provision"  # create/update resources (Terraform, cloud-init...)
+    CONFIGURE = "configure"  # configure software inside the VMs (Ansible)
+    IMAGE = "image"          # download/upload images (ISO/OVA/cloud-image)
+    BUILD = "build"          # build templates (Packer)
 
 
-# ─────────────────────────── Modelos ───────────────────────────
+# ─────────────────────────── Models ───────────────────────────
 
 class SafetyPolicy(BaseModel):
-    """Políticas de seguridad. Por defecto todo es conservador."""
+    """Safety policies. Conservative by default."""
     destroy: bool = False
     allow_downtime: bool = False
     confirm_destructive: bool = True
@@ -158,17 +157,17 @@ class LoadBalancer(BaseModel):
 
 
 class CollectionSource(str, Enum):
-    """De dónde se instaló la colección."""
-    BUILTIN = "builtin"      # viene dentro del paquete infranix
+    """Where the collection was installed from."""
+    BUILTIN = "builtin"      # ships inside the infranix package
     PIP = "pip"              # pip install (PyPI, git, url)
-    ARCHIVE = "archive"      # tar.gz local descomprimido/instalado por el user
+    ARCHIVE = "archive"      # local tar.gz unzipped/installed by the user
 
 
 class CollectionRequirement(BaseModel):
-    """Una colección que el manifiesto declara necesaria (style ansible-galaxy).
+    """A collection the manifest declares as needed (ansible-galaxy style).
 
-    El core verifica que cada requirement esté disponible (builtin o instalada)
-    antes de ejecutar; si falta, la instala (pip o archive) como requisito.
+    The core verifies each requirement is available (builtin or installed)
+    before running; if missing it installs it (pip or archive) as needed.
     """
     name: str            # 'terraform' | 'infra-collection-proxmox' | 'proxmox'
     version: Optional[str] = None      # version pkg / tag si aplica
@@ -178,7 +177,7 @@ class CollectionRequirement(BaseModel):
 
 
 class Manifest(BaseModel):
-    """El manifiesto raíz del sistema declarativo."""
+    """The root model of the declarative system."""
     version: int = 1
     project: str
     hypervisor: Hypervisor = Hypervisor.ESXI
@@ -197,7 +196,7 @@ class Manifest(BaseModel):
             names = [i.name for i in items]
             dups = {n for n in names if names.count(n) > 1}
             if dups:
-                raise ValueError(f"nombres duplicados de {kind}: {dups}")
+                raise ValueError(f"duplicate {kind} names: {dups}")
         _names(self.servers, "servers")
         _names(self.networks, "networks")
         _names(self.routers, "routers")

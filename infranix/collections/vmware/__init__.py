@@ -1,8 +1,8 @@
-"""Colección Discovery (VMware/govc) — capability: scan.
+"""Discovery collection (VMware/govc) — capability: scan.
 
-Escanea el estado actual del hypervisor (VMs, datastores, redes, imágenes).
-Envuelve `infranix.adapters.discovery.make_scanner` (ESXiScanner o MockScanner).
-El core no selecciona el scanner: esta colección lo hace y devuelve el
+Scans the current hypervisor state (VMs, datastores, networks, images).
+Wraps `infranix.adapters.discovery.make_scanner` (ESXiScanner or MockScanner).
+The core does not select the scanner: this collection does and returns the
 Inventory via PluginReport.data["inventory"].
 """
 
@@ -16,7 +16,7 @@ from infranix.adapters.discovery import make_scanner
 class Provider(PluginProvider):
     name = "vmware"
     version = "0.1.0"
-    description = "Escaneo/discovery del hypervisor VMware vía govc (o mock)"
+    description = "VMware hypervisor scan/discovery via govc (or mock)"
     capabilities = frozenset({Capability.SCAN})
 
     def require(self, ctx: PluginContext) -> list[str]:
@@ -24,7 +24,7 @@ class Provider(PluginProvider):
         if name == "esxi":
             import shutil
             if shutil.which("govc") is None:
-                return ["Binario 'govc' no encontrado en PATH."]
+                return ["'govc' binary not found in PATH."]
         return []
 
     @staticmethod
@@ -48,17 +48,17 @@ class Provider(PluginProvider):
             inventory = scanner.scan()
         except Exception as e:
             return PluginReport(ok=False, action="scan-failed",
-                                message=f"Escaneando: {e}", errors=[str(e)])
+                                message=f"Scanning: {e}", errors=[str(e)])
         return PluginReport(
             ok=True, action="scanned",
             message=(f"{len(inventory.vms)} VMs, {len(inventory.datastores)} "
-                     f"datastores, {len(inventory.images)} imágenes en "
+                     f"datastores, {len(inventory.images)} images on "
                      f"{inventory.host or ctx.config.host}"),
             data={"inventory": inventory})
 
     def destroy(self, ctx: PluginContext) -> PluginReport:
         return PluginReport(ok=False, action="unsupported",
-                            message="Discovery no destruye (solo lectura).")
+                            message="Discovery does not destroy (read-only).")
 
 
 provider = Provider

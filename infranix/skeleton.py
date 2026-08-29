@@ -1,17 +1,17 @@
-"""infra collection init — genera un esqueleto de colección (style ansible-galaxy).
+"""infra collection init — generates a collection skeleton (ansible-galaxy style).
 
-Estructura creada, análoga a `ansible-galaxy init`:
+Created structure, analogous to `ansible-galaxy init`:
 
     <name>/
-      pyproject.toml            # defina el entry point 'infranix.collections'
-      requirements.yml          # colecciones de las que depende (como requirements.yml)
-      infra_declaration/        # ≡ tasks/: declaraciones de recursos que aplica
+      pyproject.toml            # defines the 'infranix.collections' entry point
+      requirements.yml          # collections it depends on (like requirements.yml)
+      infra_declaration/        # ≡ tasks/: resource declarations it applies
         __init__.py
-        main.yml                # ejemplo de declaración de recurso
-      infra_nix/                # el paquete python con el Provider
+        main.yml                # example resource declaration
+      infra_nix/                # the python package with the Provider
         __init__.py
         provider.py
-        capabilities.py         # el enum Capability re-exportado
+        capabilities.py         # the re-exported Capability enum
       README.md
 """
 
@@ -20,13 +20,13 @@ from __future__ import annotations
 from pathlib import Path
 
 cap_help = """\
-Capabilities soportadas por InfraNix (enum):
-  scan      - discovery/estado del hypervisor
-  provision - crear/actualizar recursos
-  configure - configurar dentro de las VMs
-  image     - descargar/subir imágenes
-  build     - construir templates
-Elige las tuyas en provider.py.
+Capabilities supported by InfraNix (enum):
+  scan      - discovery / hypervisor state
+  provision - create/update resources
+  configure - configure inside the VMs
+  image     - download/upload images
+  build     - build templates
+Choose yours in provider.py.
 """
 
 PYPROJECT = """\
@@ -51,9 +51,9 @@ include = ["{pkg}*"]
 """
 
 REQUIREMENTS_YML = """\
-# Collection requirements (equivalente a ansible-galaxy requirements.yml).
-# Declara de qué colecciones/builtins depende esta colección.
-# El core las instala automáticamente antes de usar esta colección.
+# Collection requirements (equivalent to ansible-galaxy requirements.yml).
+# Declares which collections/builtins this collection depends on.
+# The core installs them automatically before using this collection.
 
 collections:
   - name: vmware          # builtin (scan)
@@ -61,9 +61,9 @@ collections:
 """
 
 MAIN_YML = """\
-# infra_declaration/  —  ≡ tasks/ de Ansible.
-# En este directorio declaras los recursos que la colección aplica.
-# El grano (Provider) los interpreta; aquí solo son declaraciones.
+# infra_declaration/  —  ≡ Ansible tasks/.
+# In this directory you declare the resources the collection applies.
+# The grain (Provider) interprets them; here they are just declarations.
 
 - name: example-server
   type: server
@@ -84,11 +84,11 @@ class Provider(PluginProvider):
     name = "{name}"
     version = "0.1.0"
     description = "{name} collection for InfraNix"
-    # Elige tus capabilities: scan, provision, configure, image, build
+    # Choose your capabilities: scan, provision, configure, image, build
     capabilities = frozenset({{Capability.SCAN, Capability.PROVISION}})
 
     def require(self, ctx: PluginContext) -> list[str]:
-        # Ej: chequea binarios/credenciales antes de actuar
+        # e.g. check binaries/credentials before acting
         return []
 
     def validate(self, ctx: PluginContext, manifest) -> list[str]:
@@ -98,9 +98,9 @@ class Provider(PluginProvider):
         return {{}}
 
     def apply(self, ctx: PluginContext) -> PluginReport:
-        # Aquí va TU lógica de real de la colección.
+        # Here goes YOUR real collection logic.
         return PluginReport(ok=True, action="none",
-                            message="{name}: apply ejecutado (esqueleto).")
+                            message="{name}: apply executed (skeleton).")
 
 
 provider = Provider
@@ -114,44 +114,44 @@ __all__ = ["Provider"]
 '''
 
 CAPABILITIES_PY = """\
-from infranix.pluginbase import Capability  # re-exportado desde core
+from infranix.pluginbase import Capability  # re-exported from core
 """
 
 README = """\
 # {name} — InfraNix collection
 
-Colección para InfraNix creada con `infra collection init`.
+Collection for InfraNix created with `infra collection init`.
 
-## Estructura (analoga a ansible-galaxy)
+## Structure (analogous to ansible-galaxy)
 
-- `pyproject.toml` — declara el entry point `infranix.collections`.
-- `requirements.yml` — colecciones de las que depende (se instalan solas).
-- `infra_declaration/` — declaraciones de recursos (≡ `tasks/`).
-- `{pkg}/` — el paquete Python con tu `Provider`.
+- `pyproject.toml` — declares the `infranix.collections` entry point.
+- `requirements.yml` — collections it depends on (auto-installed).
+- `infra_declaration/` — resource declarations (≡ `tasks/`).
+- `{pkg}/` — the Python package with your `Provider`.
 
-## Instalacion
+## Installation
 
-Desarrolla tu `Provider` en `{pkg}/provider.py`, luego:
+Develop your `Provider` in `{pkg}/provider.py`, then:
 
     pip install -e .
-    infra collection list      # tu coleccion deberia aparecer
+    infra collection list      # your collection should appear
 
-Si no hay internet, empaqueta y distribuye el tar.gz:
+If there is no internet, package and distribute the tar.gz:
 
     python -m build
     infra collection install-from-archive dist/{pkg}-0.1.0.tar.gz {name}
 
-## Declararla en un manifold
+## Declare it in a manifest
 
     project: demo
     collections:
       - name: {name}
-        source: pip          # o archive con path: dist/....
+        source: pip          # or archive with path: dist/....
 """
 
 
 def init_collection(name: str, out: Path) -> Path:
-    """Crea el esqueleto de la colección `name` bajo `out`."""
+    """Create the `name` collection skeleton under `out`."""
     safe = name.replace("-", "_").replace(".", "_").lower()
     root = (out / name).resolve()
     pkg = f"infra_collection_{safe}"

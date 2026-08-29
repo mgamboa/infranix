@@ -1,19 +1,19 @@
-"""Plugin API — contrato de colecciones para InfraNix.
+"""Plugin API — the contract for InfraNix collections.
 
-El núcleo (core) es delgado: conoce el esquema del manifiesto, el planner, el
-safety gate y el orquestador. Toda funcionalidad adicional (provisión con
-Terraform, configuración con Ansible, escaneo, imágenes, builders con Packer...)
-se entrega como *colecciones* que implementan este protocolo.
+The core is thin: it knows the manifest schema, the planner, the safety gate
+and the orchestrator. All additional functionality (Terraform provisioning,
+Ansible configuration, scanning, images, Packer builders...) is delivered as
+*collections* that implement this protocol.
 
-Una colección es un paquete Python que declara un punto de entrada:
+A collection is a Python package that declares an entry point:
 
     [project.entry-points."infranix.collections"]
     packer = "infra_collection_packer:provider"
 
-Y expone una clase `Provider(PluginProvider)` con `name` y `capabilities`.
+And exposes a `Provider(PluginProvider)` class with `name` and `capabilities`.
 
-Si una colección falla (p.ej. Packer), el fallo queda confinado ahí dentro: el
-core nunca importa internals de una colección, solo llama al protocolo.
+If a collection fails (e.g. Packer), the failure stays confined inside it: the
+core never imports a collection's internals, it only calls the protocol.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from infranix.config import InfraConfig
 from infranix.models import Capability, Manifest
 
 
-# re-export para compatibilidad (antes Capability vivía en pluginbase)
+# re-export for compatibility (Capability used to live in pluginbase)
 __all__ = [
     "Capability", "PluginContext", "PluginReport", "PluginProvider",
 ]
@@ -34,19 +34,19 @@ __all__ = [
 
 @dataclass
 class PluginContext:
-    """Contexto que el core entrega a cada colección en cada llamada."""
+    """Context that the core hands to each collection on every call."""
     config: InfraConfig
     manifest: Optional[Any] = None
-    inventory: Any = None            # Inventory (del scanner) si disponible
-    out_dir: str = "out"             # raíz de artefactos
-    image: Optional[Any] = None      # Image model, en colecciones de imagen/build
-    work_dir: Optional[Any] = None   # dir de trabajo propio de la colección
+    inventory: Any = None            # Inventory (from the scanner) if available
+    out_dir: str = "out"             # artifacts root
+    image: Optional[Any] = None      # Image model, for image/build collections
+    work_dir: Optional[Any] = None   # collection's own working directory
     extras: dict = field(default_factory=dict)
 
 
 @dataclass
 class PluginReport:
-    """Resultado tipado que devuelve una colección."""
+    """Typed result returned by a collection."""
     ok: bool
     action: str = ""        # "none" | "uploaded" | "template-ready" | ...
     message: str = ""
@@ -55,11 +55,11 @@ class PluginReport:
 
 
 class PluginProvider(ABC):
-    """Base de todas las colecciones.
+    """Base for all collections.
 
-    Una colección declara sus `capabilities` y el core invoca SOLO los métodos
-    de las capabilities que coinciden. El método `label` describe la colección
-    para `infra collection list`.
+    A collection declares its `capabilities` and the core invokes ONLY the
+    methods of the capabilities that match. The `label` method describes the
+    collection for `infra collection list`.
     """
 
     name: str = ""
@@ -74,26 +74,26 @@ class PluginProvider(ABC):
         desc = f" — {self.description}" if self.description else ""
         return f"{self.name} v{self.version} [{caps}]{desc}"
 
-    # ── hooks opcionales (por defecto no hacen nada salvo `require`) ──
+    # ── optional hooks (by default they do nothing except `require`) ──
 
     def require(self, ctx: PluginContext) -> list[str]:
-        """Retorna lista de errores si el entorno no está listo (binarios,
-        credenciales, red...). Chequeado antes de usar la colección."""
+        """Return a list of errors if the environment is not ready (binaries,
+        credentials, network...). Checked before using the collection."""
         return []
 
     def validate(self, ctx: PluginContext, manifest: Manifest) -> list[str]:
-        """Valida el manifiesto contra lo que esta colección puede hacer."""
+        """Validate the manifest against what this collection can do."""
         return []
 
     def plan(self, ctx: PluginContext) -> dict:
-        """Calcula el trabajo planificado. Estructura libre (es info)."""
+        """Compute the planned work. Free structure (it is informational)."""
         return {}
 
     @abstractmethod
     def apply(self, ctx: PluginContext) -> PluginReport:
-        """Ejecuta el trabajo. Cada colección implementa su logica real."""
+        """Execute the work. Each collection implements its real logic."""
 
     def destroy(self, ctx: PluginContext) -> PluginReport:
-        """Destruye lo creado. Default: sin implementar (no-destructive)."""
+        """Destroy what was created. Default: not implemented (non-destructive)."""
         return PluginReport(ok=False, action="unsupported",
-                            message=f"{self.name} no implementa destroy.")
+                            message=f"{self.name} does not implement destroy.")

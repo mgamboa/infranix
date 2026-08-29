@@ -1,11 +1,11 @@
-"""Discovery / Scan de infraestructura.
+"""Discovery / infrastructure scan.
 
-Encapsula la consulta del estado actual del hypervisor. Para ESXi usa
-govc (CLI de VMware). Provee un adaptador `mock` para desarrollo sin
-acceso real.
+Encapsulates querying the current hypervisor state. For ESXi it uses
+govc (VMware CLI). Provides a `mock` adapter for development without
+real access.
 
-Cada método devuelve estructuras de datos planas (dicts) que el planificador
-usa para calcular el diff contra el manifiesto declarado.
+Each method returns flat data structures (dicts) that the planner uses
+to compute the diff against the declared manifest.
 """
 
 from __future__ import annotations
@@ -19,13 +19,13 @@ from typing import Any, Optional
 
 
 def _num(value: str) -> int:
-    """Extrae el primer número entero de un string tipo '6 vCPU(s)' o '24576MB'."""
+    """Extract the first integer from a string like '6 vCPU(s)' or '24576MB'."""
     m = re.search(r"\d+", str(value))
     return int(m.group(0)) if m else 0
 
 
 def _size_bytes(value: str) -> int:
-    """Convierte 'X GB', 'Y TB', 'Z MB' a bytes."""
+    """Convert 'X GB', 'Y TB', 'Z MB' to bytes."""
     m = re.search(r"([\d.]+)\s*(B|KB|MB|GB|TB|PB)", str(value), re.IGNORECASE)
     if not m:
         return 0
@@ -38,7 +38,7 @@ def _size_bytes(value: str) -> int:
 from infranix.config import InfraConfig
 
 
-# ─────────────────────────── Estructuras ───────────────────────────
+# ─────────────────────────── Structures ───────────────────────────
 
 @dataclass
 class VMState:
@@ -61,7 +61,7 @@ class DatastoreState:
 
 @dataclass
 class Inventory:
-    """Snapshot completo del estado actual del hypervisor."""
+    """Complete snapshot of the current hypervisor state."""
     host: str
     os_version: str
     vms: list[VMState] = field(default_factory=list)
@@ -87,7 +87,7 @@ class Inventory:
 # ─────────────────────────── Base ───────────────────────────
 
 class Scanner:
-    """Interfaz común para todos los adaptadores de discovery."""
+    """Common interface for all discovery adapters."""
 
     def scan(self) -> Inventory:  # pragma: no cover
         raise NotImplementedError
@@ -96,7 +96,7 @@ class Scanner:
 # ─────────────────────────── ESXi via govc ───────────────────────────
 
 class ESXiScanner(Scanner):
-    """Scan de un ESXi standalone usando la CLI `govc`."""
+    """Scan of a standalone ESXi using the `govc` CLI."""
 
     def __init__(self, config: InfraConfig):
         self.config = config
@@ -106,7 +106,7 @@ class ESXiScanner(Scanner):
         env = os.environ.get("GOVC_URL")
         if env:
             return env
-        # /sdk para HostAgent (ESXi standalone)
+        # /sdk for HostAgent (standalone ESXi)
         return f"https://root:{self.config.password}@{self.config.host}/sdk"
 
     def _govc(self, args: list[str]) -> str:
@@ -118,7 +118,7 @@ class ESXiScanner(Scanner):
             capture_output=True, text=True, env=env, timeout=60,
         )
         if res.returncode != 0:
-            raise RuntimeError(f"govc {' '.join(args)} falló: {res.stderr.strip()}")
+            raise RuntimeError(f"govc {' '.join(args)} failed: {res.stderr.strip()}")
         return res.stdout
 
     def _about(self) -> dict:
@@ -185,13 +185,13 @@ class ESXiScanner(Scanner):
             line = line.strip()
             if not line:
                 continue
-            # tomamos el nombre base (última parte del path)
+            # take the base name (last part of the path)
             name = line.split("/")[-1]
             names.append(name)
         return names
 
     def _images(self) -> list[str]:
-        """Lista de ISOs/images disponibles en el datastore (carpeta ISO)."""
+        """List of ISOs/images available on the datastore (ISO folder)."""
         try:
             out = self._govc(["datastore.ls", "ISO"])
             return [l.strip() for l in out.splitlines() if l.strip()]
@@ -226,7 +226,7 @@ class ESXiScanner(Scanner):
 # ─────────────────────────── Mock ───────────────────────────
 
 class MockScanner(Scanner):
-    """Scan simulado para desarrollo sin ESXi real."""
+    """Simulated scan for development without a real ESXi."""
 
     def __init__(self, config: InfraConfig):
         self.config = config
@@ -261,11 +261,11 @@ class MockScanner(Scanner):
 # ─────────────────────────── Factory ───────────────────────────
 
 def make_scanner(config: InfraConfig) -> Scanner:
-    """Devuelve el scanner adecuado según el hypervisor configurado."""
+    """Return the right scanner according to the configured hypervisor."""
     hv = config.hypervisor.lower()
     if hv in ("mock",):
         return MockScanner(config)
     if hv in ("esxi", "vsphere", "vcenter", "proxmox", "kvm"):
-        # Por ahora ESXi via govc como backend primario
+        # For now ESXi via govc as the primary backend
         return ESXiScanner(config)
-    raise ValueError(f"Hypervisor no soportado: {hv}")
+    raise ValueError(f"Unsupported hypervisor: {hv}")

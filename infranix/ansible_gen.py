@@ -1,13 +1,13 @@
-"""Generador de Ansible — Fase 1.
+"""Ansible generator — Phase 1.
 
-Toma el manifiesto declarativo y produce:
-  - inventory/hosts.yml   (grupos por rol, hosts con vars de conexión)
-  - playbooks/site.yml    (aplica roles a cada grupo)
-  - roles/<rol>/          (esqueleto de roles base realizables)
+Takes the declarative manifest and produces:
+  - inventory/hosts.yml   (groups by role, hosts with connection vars)
+  - playbooks/site.yml    (applies roles to each group)
+  - roles/<rol>/          (skeleton of feasible base roles)
 
-Los roles lista: webserver, postgres, monitoring-agent, wazuh-server,
-wazuh-indexer, wazuh-dashboard, kubernetes. Cada uno es un esqueleto con
-tasks/main.yml listo para ampliar.
+The listed roles: webserver, postgres, monitoring-agent, wazuh-server,
+wazuh-indexer, wazuh-dashboard, kubernetes. Each one is a skeleton with
+tasks/main.yml ready to extend.
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ import yaml
 from infranix.models import Manifest
 
 
-# Esqueleto de tasks por rol
+# Task skeleton per role
 ROLE_TASKS = {
     "webserver": """\
-- name: Instalar nginx webserver
+- name: Install nginx webserver
   ansible.builtin.package:
     name: nginx
     state: present
   become: true
 
-- name: Iniciar y habilitar nginx
+- name: Start and enable nginx
   ansible.builtin.service:
     name: nginx
     state: started
@@ -36,20 +36,20 @@ ROLE_TASKS = {
   become: true
 """,
     "postgres": """\
-- name: Instalar PostgreSQL
+- name: Install PostgreSQL
   ansible.builtin.package:
     name: postgresql-server
     state: present
   become: true
 
-- name: Inicializar base de datos (si no existe)
+- name: Initialize database (if it does not exist)
   ansible.builtin.command: postgresql-setup --initdb
   args:
     creates: /var/lib/pgsql/data/PG_VERSION
   become: true
   ignore_errors: true
 
-- name: Iniciar y habilitar postgresql
+- name: Start and enable postgresql
   ansible.builtin.service:
     name: postgresql
     state: started
@@ -57,13 +57,13 @@ ROLE_TASKS = {
   become: true
 """,
     "monitoring-agent": """\
-- name: Instalar agente (ej: node_exporter)
+- name: Install agent (e.g. node_exporter)
   ansible.builtin.package:
     name: prometheus-node-exporter
     state: present
   become: true
 
-- name: Iniciar node_exporter
+- name: Start node_exporter
   ansible.builtin.service:
     name: prometheus-node-exporter
     state: started
@@ -71,30 +71,30 @@ ROLE_TASKS = {
   become: true
 """,
     "wazuh-server": """\
-- name: Instalar wazuh-manager (placeholder)
+- name: Install wazuh-manager (placeholder)
   ansible.builtin.debug:
-    msg: "Rol wazuh-server a implementar con repositorio oficial de Wazuh"
+    msg: "wazuh-server role to be implemented with the official Wazuh repository"
 """,
     "wazuh-indexer": """\
-- name: Instalar wazuh-indexer (placeholder)
+- name: Install wazuh-indexer (placeholder)
   ansible.builtin.debug:
-    msg: "Rol wazuh-indexer a implementar"
+    msg: "wazuh-indexer role to be implemented"
 """,
     "wazuh-dashboard": """\
-- name: Instalar wazuh-dashboard (placeholder)
+- name: Install wazuh-dashboard (placeholder)
   ansible.builtin.debug:
-    msg: "Rol wazuh-dashboard a implementar"
+    msg: "wazuh-dashboard role to be implemented"
 """,
     "kubernetes": """\
-- name: Instalar kubelet/kubeadm (placeholder)
+- name: Install kubelet/kubeadm (placeholder)
   ansible.builtin.debug:
-    msg: "Rol kubernetes a implementar"
+    msg: "kubernetes role to be implemented"
 """,
 }
 
 
 class AnsibleGenerator:
-    """Genera inventario + playbooks + esqueletos de roles Ansible."""
+    """Generates Ansible inventory + playbooks + role skeletons."""
 
     def __init__(self, manifest: Manifest, out_dir: Path):
         self.manifest = manifest
@@ -111,9 +111,9 @@ class AnsibleGenerator:
         inv_dir = base / "inventory"
         pb_dir = base / "playbooks"
 
-        # ── Inventario (YAML) ──
+        # ── Inventory (YAML) ──
         hosts = {}
-        all_vars = {"ansible_user": "root"}  # placeholder; se ajusta por env
+        all_vars = {"ansible_user": "root"}  # placeholder; adjusted per environment
         for s in self.manifest.servers:
             if s.action.value != "destroy":
                 hosts[s.name] = {"ansible_host": self._host_ip(s) or ""}
@@ -126,7 +126,7 @@ class AnsibleGenerator:
                 "vars": all_vars,
             }
         }
-        # grupos por rol
+        # groups by role
         role_groups = {}
         for key in list(hosts):
             if key.startswith("_role_"):
@@ -139,9 +139,9 @@ class AnsibleGenerator:
         (inv_dir / "hosts.yml").write_text(
             yaml.dump(inventory, default_flow_style=False, sort_keys=False))
 
-        # ── Playbook site.yml ──
+        # ── site.yml playbook ──
         site_play = {
-            "name": "Converger roles InfraNix",
+            "name": "Converge InfraNix roles",
             "hosts": "all",
             "gather_facts": True,
         }
@@ -149,18 +149,18 @@ class AnsibleGenerator:
         (pb_dir / "site.yml").write_text(
             yaml.dump([site_play], default_flow_style=False, sort_keys=False))
 
-        # ── Esqueletos de roles ──
+        # ── Role skeletons ──
         roles_dir = base / "roles"
         for role, tasks in ROLE_TASKS.items():
             t_dir = roles_dir / role / "tasks"
             t_dir.mkdir(parents=True, exist_ok=True)
             (t_dir / "main.yml").write_text(tasks)
 
-        # markdown de como usar
+        # markdown on how to use it
         (base / "README.md").write_text(
             "# InfraNix - Ansible\n\n"
-            "Inventario y roles generados desde el manifiesto.\n\n"
-            "Ejecutar: `ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook "
+            "Inventory and roles generated from the manifest.\n\n"
+            "Run: `ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook "
             "-i inventory/hosts.yml playbooks/site.yml`\n"
         )
         return base

@@ -1,10 +1,10 @@
-"""Generador de Terraform — Fase 1.
+"""Terraform generator — Phase 1.
 
-Toma el manifiesto declarativo y produce archivos .tf (HashiCorp/vsphere)
-para crear VMs en un ESXi standalone, clonando desde templates.
+Takes the declarative manifest and produces .tf files (HashiCorp/vsphere)
+to create VMs on a standalone ESXi, cloning from templates.
 
-Cada VM se clona de un template cuyo nombre coincide con la imagen del
-manifiesto (server.image). Archivos: provider/variables/main/tfvars/outputs.
+Each VM is cloned from a template whose name matches the manifest image
+(server.image). Files: provider/variables/main/tfvars/outputs.
 """
 
 from __future__ import annotations
@@ -87,14 +87,14 @@ data "vsphere_host" "host" {
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
-# ── Templates de clonación ──
+# ── Clone templates ──
 {% for s in servers %}
 data "vsphere_virtual_machine" "template_{{ s.name }}" {
   name          = "{{ s.image }}"
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 {% endfor %}
-# ── Recursos (VMs) ──
+# ── Resources (VMs) ──
 {% for s in servers %}
 resource "vsphere_virtual_machine" "{{ s.name }}" {
   name             = "{{ s.name }}"
@@ -152,7 +152,7 @@ output "vm_ips" {
 
 
 class TerraformGenerator:
-    """Convierte un Manifest en archivos .tf para ESXi standalone."""
+    """Converts a Manifest into .tf files for a standalone ESXi."""
 
     guest_ids = {
         "rhel9": "rhel9_64Guest", "rhel8": "rhel8_64Guest",

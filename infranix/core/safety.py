@@ -1,12 +1,12 @@
-"""Safety Gate — Núcleo de seguridad de InfraNix.
+"""Safety Gate — InfraNix's security core.
 
-Garantiza que NINGUNA operación destructiva o de caída de servicio se ejecute
-sin opt-in explícito. Es la capa por defecto, nunca opcional.
+Guarantees that NO destructive or downtime operation runs without explicit
+opt-in. It is the default layer, never optional.
 
-Reglas:
-  - Destroy   : requiere safety.destroy=True (global) O action=destroy + confirmación en el recurso.
-  - Downtime  : apagar/affectar un servicio existente requiere safety.allow_downtime=True.
-  - Overwrite : modificar config existente siempre registra backup y pide confirmación.
+Rules:
+  - Destroy  : requires safety.destroy=True (global) OR action=destroy + confirmation on the resource.
+  - Downtime : shutting down/affecting an existing service requires safety.allow_downtime=True.
+  - Overwrite: modifying existing config always logs a backup and asks for confirmation.
 """
 
 from __future__ import annotations
@@ -26,16 +26,16 @@ class Severity(str, Enum):
 
 @dataclass
 class SafetyFinding:
-    """Un hallazgo del Safety Gate sobre una operación propuesta."""
+    """A Safety Gate finding about a proposed operation."""
     severity: Severity
     message: str
     resource: Optional[str] = None
-    remedy: Optional[str] = None  # cómo desbloquear (solución alternativa)
+    remedy: Optional[str] = None  # how to unblock (workaround)
 
 
 @dataclass
 class SafetyReport:
-    """Resultado de evaluar una operación contra las políticas de seguridad."""
+    """Result of evaluating an operation against the safety policies."""
     allowed: bool
     findings: list[SafetyFinding] = field(default_factory=list)
     destructive_count: int = 0
@@ -49,62 +49,62 @@ class SafetyReport:
         return [f for f in self.findings if f.severity == Severity.WARN]
 
     def summary(self) -> str:
-        lines = [f"Safety Gate: {'APROBADO' if self.allowed else 'BLOQUEADO'} "
-                 f"({len(self.blocked)} bloqueos)"]
+        lines = [f"Safety Gate: {'APPROVED' if self.allowed else 'BLOCKED'} "
+                 f"({len(self.blocked)} blocks)"]
         for f in self.findings:
             icon = {"info": "[i]", "warning": "[!]", "block": "[X]"}[f.severity.value]
             lines.append(f"  {icon} {f.message}")
             if f.remedy:
-                lines.append(f"        remedio: {f.remedy}")
+                lines.append(f"        remedy: {f.remedy}")
         return "\n".join(lines)
 
 
 class SafetyGate:
-    """Evalúa operaciones propuestas contra las políticas del manifiesto."""
+    """Evaluate proposed operations against the manifest's policies."""
 
     def __init__(self, policy: SafetyPolicy):
         self.policy = policy
 
     def check_server_action(self, server_name: str, action: ServerAction,
                             currently_exists: bool) -> SafetyFinding | None:
-        """Retorna un hallazgo BLOQUEANTE o None si está permitido."""
-        # Destrucción
+        """Return a BLOCKING finding or None if allowed."""
+        # Destruction
         if action == ServerAction.DESTROY:
             if not currently_exists:
                 return SafetyFinding(
                     Severity.INFO,
-                    f"destroy de '{server_name}' pero no existe; sin efecto.",
+                    f"destroy of '{server_name}' but it does not exist; no effect.",
                     server_name,
                 )
             if not self.policy.destroy:
                 return SafetyFinding(
                     Severity.BLOCK,
-                    f"destroy de '{server_name}' BLOQUEADO: exige "
-                    f"safety.destroy: true y confirmación explícita.",
+                    f"destroy of '{server_name}' BLOCKED: requires "
+                    f"safety.destroy: true and explicit confirmation.",
                     server_name,
-                    remedy="Añadir 'safety.destroy: true' y 'action: destroy' "
-                           "explicitamente al manifiesto.",
+                    remedy="Add 'safety.destroy: true' and 'action: destroy' "
+                           "explicitly to the manifest.",
                 )
             return None
 
-        # Update que podría caer un servicio existente
+        # Update that could take down an existing service
         if action == ServerAction.UPDATE and currently_exists:
             if not self.policy.allow_downtime:
                 return SafetyFinding(
                     Severity.WARN,
-                    f"actualización de '{server_name}' (existe) puede causar "
-                    f"tiempo de inactividad.",
+                    f"update of '{server_name}' (exists) may cause "
+                    f"downtime.",
                     server_name,
-                    remedy="Añadir 'safety.allow_downtime: true' si aceptas downtime.",
+                    remedy="Add 'safety.allow_downtime: true' if you accept downtime.",
                 )
         return None
 
     def evaluate(self, manifest: Manifest, diff) -> SafetyReport:
-        """Evalúa todo un plan de cambios derivado del manifiesto."""
+        """Evaluate a whole change plan derived from the manifest."""
         report = SafetyReport(allowed=True)
         report.destructive_count = 0
 
-        # Servidores programados para destroy
+        # Servers scheduled for destroy
         for server in manifest.servers:
             if server.action == ServerAction.DESTROY:
                 report.destructive_count += 1
@@ -115,17 +115,17 @@ class SafetyGate:
             if finding:
                 report.findings.append(finding)
 
-        # Redes declaradas que no existen y se crean: siempre ok.
-        # Redes existentes que se reconfiguran (update): warning si no allow_downtime.
+        # Declared networks that do not exist and are created: always ok.
+        # Existing networks being reconfigured (update): warning if not allow_downtime.
         for net in manifest.networks:
-            # (simplificado: en fase 0 solo se crean)
+            # (simplified: in phase 0 they are only created)
             pass
 
         if not self.policy.confirm_destructive and report.destructive_count:
             report.findings.append(SafetyFinding(
                 Severity.WARN,
-                "confirm_destructive está desactivado pero hay operaciones destructivas.",
-                remedy="Reactivar 'safety.confirm_destructive: true'.",
+                "confirm_destructive is disabled but there are destructive operations.",
+                remedy="Re-enable 'safety.confirm_destructive: true'.",
             ))
 
         report.allowed = len(report.blocked) == 0

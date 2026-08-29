@@ -1,16 +1,16 @@
-"""InfraNix — Orquestador de alto nivel (core delgado).
+"""InfraNix — high-level orchestrator (thin core).
 
-Este módulo es EL CORE: casi no contiene lógica de provisión, solo orquesta.
-Cada capacidad (scan, provision, configure, image, build) la resuelve en una
-colección vía el registry. Si una colección falla, el error queda confinado
-ahí — el core sigue operativo y reporta qué colección falló.
+This module IS THE CORE: it contains almost no provisioning logic, only
+orchestration. Each capability (scan, provision, configure, image, build) is
+resolved to a collection via the registry. If a collection fails, the error
+stays confined there — the core keeps running and reports which collection failed.
 
-Funciones del core únicamente:
-  - cargar/validar el manifiesto
-  - planear el diff (Planner)
-  - aplicar el Safety Gate
-  - resolver y llamar colecciones por capability
-  - ensamblar el RunReport
+The core only does:
+  - load/validate the manifest
+  - plan the diff (Planner)
+  - apply the Safety Gate
+  - resolve and call collections by capability
+  - assemble the RunReport
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from infranix.models import Manifest
 
 @dataclass
 class RunReport:
-    """Reporte estructurado de una ejecución de la aplicación."""
+    """Structured report of an application run."""
     project: str = ""
     hypervisor: str = ""
     plan_summary: str = ""
@@ -44,38 +44,38 @@ class RunReport:
     errors: list[str] = field(default_factory=list)
 
     def to_markdown(self) -> str:
-        lines = [f"# Reporte InfraNix — {self.project}",
+        lines = [f"# InfraNix Report — {self.project}",
                  f"**Hypervisor:** {self.hypervisor}",
                  f"**Plan:** {self.plan_summary}",
-                 f"**Safety:** {'APROBADO' if self.safety_approved else 'BLOQUEADO'}",
+                 f"**Safety:** {'APPROVED' if self.safety_approved else 'BLOCKED'}",
                  f"  {self.safety_summary}"]
         if self.scans:
             lines.append("**Discovery:**")
             lines += [f"  - {s}" for s in self.scans]
         if self.images_ensured:
-            lines.append("**Imágenes:**")
+            lines.append("**Images:**")
             lines += [f"  - {i}" for i in self.images_ensured]
-        lines.append(f"**Artefactos generados:** {'sí' if self.artifacts_generated else 'no'}")
+        lines.append(f"**Artifacts generated:** {'yes' if self.artifacts_generated else 'no'}")
         if self.provision_log:
-            lines.append("**Provisión (Terraform):**")
+            lines.append("**Provision (Terraform):**")
             lines.append(f"  {self.provision_log}")
         if self.configure_log:
-            lines.append("**Configuración (Ansible):**")
+            lines.append("**Configuration (Ansible):**")
             lines.append(f"  {self.configure_log}")
         if self.errors:
-            lines.append("**Errores:**")
+            lines.append("**Errors:**")
             lines += [f"  - {e}" for e in self.errors]
         return "\n".join(lines)
 
 
 class InfraNix:
-    """Orquestador declarativo: corre un manifiesto YAML de principio a fin."""
+    """Declarative orchestrator: runs a YAML manifest end to end."""
 
     def __init__(self, config: Optional[InfraConfig] = None):
         self.config = config or load_config()
         self.registry = get_registry()
 
-    # ── Utilería ──
+    # ── Utilities ──
     @staticmethod
     def load_manifest(path) -> Manifest:
         with open(path, "r") as f:
@@ -88,19 +88,19 @@ class InfraNix:
         p = self.registry.resolve(cap, prefer=prefer)
         if p is None:
             raise RuntimeError(
-                f"Ninguna colección con capability {cap.value} habilitada "
-                f"para {what}. Ver 'infra collection list'.")
+                f"No collection with capability {cap.value} enabled "
+                f"for {what}. See 'infra collection list'.")
         return p
 
-    # ── Pasos (cada uno delega en una colección) ──
+    # ── Steps (each one delegates to a collection) ──
 
     @staticmethod
     def _prefer_names(manifest) -> Optional[list]:
-        """Nombres de colecciones que el manifiesto pide explícitamente."""
+        """Collection names the manifest explicitly asks for."""
         return [c.name for c in (manifest.collections or [])] or None
 
     def _do_scan(self, _manifest) -> tuple[list, Optional[object]]:
-        """Escanea via colección SCAN. Devuelve (scans, inventory|None)."""
+        """Scan via a SCAN collection. Returns (scans, inventory|None)."""
         provider = self._cap(Capability.SCAN, "scan",
                              prefer=self._prefer_names(_manifest))
         ctx = PluginContext(config=self.config)
@@ -112,20 +112,20 @@ class InfraNix:
         return messages, inventory
 
     def _do_images(self, manifest, inventory, out_dir, apply) -> list[str]:
-        provider = self._cap(Capability.IMAGE, "imágenes",
+        provider = self._cap(Capability.IMAGE, "images",
                              prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir)
         if not apply:
-            return [f"{p['image']}: (dry-run) se asegurará al aplicar"
+            return [f"{p['image']}: (dry-run) will be ensured on apply"
                     for p in provider.plan(ctx).get("ensure", [])
                     if p["status"] == "needed"] or \
-                   ["(dry-run) imágenes requeridas se asegurarán en apply"]
+                   ["(dry-run) required images will be ensured on apply"]
         report = provider.apply(ctx)
         return report.message.splitlines()
 
     def _do_provision(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
-        provider = self._cap(Capability.PROVISION, "provisión (Terraform)",
+        provider = self._cap(Capability.PROVISION, "provision (Terraform)",
                              prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir,
@@ -134,7 +134,7 @@ class InfraNix:
         return report.ok, report.message
 
     def _do_configure(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
-        provider = self._cap(Capability.CONFIGURE, "configuración (Ansible)",
+        provider = self._cap(Capability.CONFIGURE, "configuration (Ansible)",
                              prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir,
@@ -142,26 +142,26 @@ class InfraNix:
         report = provider.apply(ctx)
         return report.ok, report.message
 
-    # ── Ejecución principal ──
+    # ── Main execution ──
     def run(self, manifest_path: str, out_dir: str = "out",
             apply: bool = False) -> RunReport:
-        """Corre el archivo declarativo. Devuelve un RunReport.
+        """Run the declarative file. Returns a RunReport.
 
-        apply=False → solo planifica (dry-run, sin tocar nada).
-        apply=True  → ejecuta las colecciones provisión/configuración.
+        apply=False → only plans (dry-run, touches nothing).
+        apply=True  → runs the provision/config collections.
         """
         report = RunReport()
         try:
             manifest = self.load_manifest(manifest_path)
         except Exception as e:
-            report.errors.append(f"Manifiesto inválido: {e}")
+            report.errors.append(f"Invalid manifest: {e}")
             return report
 
         report.project = manifest.project
         report.hypervisor = manifest.hypervisor.value
 
-        # 0) Asegurar colecciones requeridas (behaves like ansible regard de
-        #    requirements: instala lo que falta antes de ejecutar)
+        # 0) Ensure required collections (behaves like ansible-galaxy regarding
+        #    requirements: installs what is missing before running)
         if manifest.collections:
             try:
                 req_msgs = self.registry.ensure_required(manifest.collections)
@@ -169,10 +169,10 @@ class InfraNix:
                     if m.startswith("ERROR"):
                         report.errors.append(m)
             except Exception as e:
-                report.errors.append(f"Resolviendo colecciones: {e}")
+                report.errors.append(f"Resolving collections: {e}")
                 return report
 
-        # 1) Scan (colección SCAN)
+        # 1) Scan (SCAN collection)
         try:
             scans, inventory = self._do_scan(manifest)
             report.scans = scans
@@ -180,9 +180,9 @@ class InfraNix:
             report.errors.append(str(e))
             return report
 
-        # 2) Planear diff
+        # 2) Plan the diff
         if inventory is None:
-            report.errors.append("Sin inventario: no se puede planear.")
+            report.errors.append("No inventory: cannot plan.")
             return report
         plan: Plan = Planner(manifest, inventory).plan()
         report.plan_summary = plan.summary()
@@ -192,16 +192,16 @@ class InfraNix:
         report.safety_approved = gate.allowed
         report.safety_summary = gate.summary()
         if not gate.allowed:
-            report.errors.append("Plan bloqueado por el Safety Gate.")
+            report.errors.append("Plan blocked by the Safety Gate.")
             report.errors.append(report.safety_summary)
             return report
 
-        # 4) Imágenes (solo si las pide el manifiesto)
+        # 4) Images (only if the manifest asks for them)
         if manifest.images:
             report.images_ensured = self._do_images(
                 manifest, inventory, out_dir, apply)
 
-        # 5) Provición (Terraform) — genera siempre; aplica si `apply`
+        # 5) Provision (Terraform) — always generates; applies if `apply`
         try:
             should_run = plan.changes and any(
                 c.kind in (ChangeKind.CREATE, ChangeKind.UPDATE)
@@ -216,7 +216,7 @@ class InfraNix:
         except Exception as e:
             report.errors.append(str(e))
 
-        # 6) Configuración (Ansible) — solo en modo aplicativo
+        # 6) Configuration (Ansible) — only in apply mode
         if apply:
             try:
                 ok, msg = self._do_configure(manifest, inventory, out_dir, True)

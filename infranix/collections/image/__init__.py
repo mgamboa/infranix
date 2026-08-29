@@ -1,11 +1,11 @@
-"""Colección Image — capability: image.
+"""Image collection — capability: image.
 
-Gestiona la disponibilidad de imágenes (ISO/OVA/cloud-image) en el hypervisor:
-descarga desde mirror oficial si falta, sube al datastore y registra en el
-catálogo local. Envuelve `infranix.image_manager.ImageManager` y lo expone a
-través del protocolo de colecciones (PluginProvider).
+Manages the availability of images (ISO/OVA/cloud-image) on the hypervisor:
+downloads from the official mirror if missing, uploads to the datastore and
+registers it in the local catalog. Wraps `infranix.image_manager.ImageManager`
+and exposes it through the collection protocol (PluginProvider).
 
-El core nunca importa ImageManager directamente: delega aquí.
+The core never imports ImageManager directly: it delegates here.
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ from infranix.image_manager import ImageManager
 class Provider(PluginProvider):
     name = "image"
     version = "0.1.0"
-    description = "Descarga/subir imágenes (ISO) al datastore y registra catálogo"
+    description = "Download/upload images (ISO) to the datastore and registers the catalog"
     capabilities = frozenset({Capability.IMAGE})
 
-    # ── protocolo ──
+    # ── protocol ──
 
     def require(self, ctx: PluginContext) -> list[str]:
         import shutil
         errors = []
         if shutil.which("govc") is None:
-            errors.append("Binario 'govc' no encontrado en PATH.")
+            errors.append("'govc' binary not found in PATH.")
         if not ctx.config.host:
-            errors.append("INFRA_HOST vacío: define la IP del hypervisor.")
+            errors.append("INFRA_HOST is empty: set the hypervisor IP.")
         return errors
 
     def validate(self, ctx: PluginContext, manifest) -> list[str]:
@@ -37,11 +37,11 @@ class Provider(PluginProvider):
         seen: set[str] = set()
         for img in manifest.images:
             if img.name in seen:
-                errors.append(f"Imagen duplicada: '{img.name}'")
+                errors.append(f"Duplicate image: '{img.name}'")
                 continue
             seen.add(img.name)
             if not img.version:
-                errors.append(f"Imagen '{img.name}' sin versión.")
+                errors.append(f"Image '{img.name}' has no version.")
         return errors
 
     def plan(self, ctx: PluginContext) -> dict:
@@ -54,7 +54,7 @@ class Provider(PluginProvider):
         return {"ensure": work}
 
     def apply(self, ctx: PluginContext) -> PluginReport:
-        """Asegura todas las imágenes del manifiesto (descarga+sube si falta)."""
+        """Ensure all manifest images (download+upload if missing)."""
         errs = self.require(ctx)
         if errs:
             return PluginReport(ok=False, action="env-missing",
@@ -70,7 +70,7 @@ class Provider(PluginProvider):
             res = im.ensure(img.name, img.distro, img.version,
                             available_remotes=available)
             reports.append(f"{img.name}: {res.action} — {res.message}")
-            if res.action != "available" and res.action != "none" and not res.message.startswith("ya disponible"):
+            if res.action != "available" and res.action != "none" and not res.message.startswith("already available"):
                 if res.action not in ("none",):
                     ok_all = False
         return PluginReport(ok=ok_all, action="ensured",

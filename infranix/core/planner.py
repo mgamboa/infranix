@@ -1,7 +1,7 @@
-"""Planner — Calcula el diff entre el estado deseado (manifest) y el actual.
+"""Planner — Computes the diff between the desired state (manifest) and the current one.
 
-Genera un Plan legible y auditable: qué crea, actualiza, destruye, qué imágenes
-faltan (para disparar el Image Manager), y qué productos/configuraciones aplica.
+Generates a readable, auditable Plan: what it creates, updates, destroys, which
+images are missing (to trigger the Image Manager), and which products/configs it applies.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class PlanChange:
     resource_type: str        # server | network | router | load_balancer | image
     name: str
     detail: str = ""
-    counterpart: Optional[VMState] = None  # estado actual si existe
+    counterpart: Optional[VMState] = None  # current state if it exists
 
 
 @dataclass
@@ -53,7 +53,7 @@ class Plan:
 
 
 class Planner:
-    """Construye un plan de cambios comparando manifest vs inventory."""
+    """Builds a change plan comparing the manifest against the inventory."""
 
     def __init__(self, manifest: Manifest, inventory: Inventory):
         self.manifest = manifest
@@ -66,18 +66,18 @@ class Planner:
         return None
 
     def _existing_image(self, name: str) -> bool:
-        """Reconoce la imagen pedida contra las disponibles en el hypervisor.
+        """Recognize the requested image against those available on the hypervisor.
 
-        Hace match flexible: si el manifiesto pide 'rhel-9.5' y el datastore
-        tiene 'rhel-9.5-x86_64-dvd.iso', se considera disponible (normaliza
-        distro+version en el nombre del ISO).
+        Does flexible matching: if the manifest asks for 'rhel-9.5' and the
+        datastore has 'rhel-9.5-x86_64-dvd.iso', it is considered available
+        (normalizes distro+version within the ISO name).
         """
         if not name:
             return False
         target = name.lower().strip()
 
         def norm(s: str) -> str:
-            # reduce espacios/puntos separadores a nada y quita engobe de ISO
+            # reduce spaces/dots/separators to nothing and strip ISO noise
             s = s.lower().strip()
             s = re.sub(r"[-_. ]+", "", s)
             s = s.replace("x86_64dvd", "").replace("x86_64", "")
@@ -86,14 +86,14 @@ class Planner:
             return s
 
         tn = norm(target)
-        # match exacto
+        # exact match
         for img in self.inventory.images:
             if target == img.lower():
                 return True
-        # match por base normalizada (rhel9.5 vs rhel9.5x86_64dvd)
+        # normalized-base match (rhel9.5 vs rhel9.5x86_64dvd)
         for img in self.inventory.images:
             if norm(img).startswith(tn) or tn.startswith(norm(img)):
-                # guard: evitar match vacio
+                # guard: avoid empty match
                 if tn and norm(img):
                     return True
         return False
@@ -101,37 +101,37 @@ class Planner:
     def plan(self) -> Plan:
         plan = Plan()
 
-        # ── Servidores ──
+        # ── Servers ──
         for server in self.manifest.servers:
             existing = self._existing_vm(server.name)
-            # ¿Existe la imagen que pide?
-            # Fase 0: asumimos que la imagen es el nombre de un ISO/template
-            # disponible; si no, lo marcamos para disparar Image Manager.
+            # Does the requested image exist?
+            # Phase 0: we assume the image is the name of an available ISO/template;
+            # if not, we mark it to trigger the Image Manager.
             image_key = str(server.image)
             if not self._existing_image(image_key) and not self._template_available(server):
                 plan.images_missing.append(image_key)
                 plan.changes.append(PlanChange(
                     ChangeKind.IMAGE_MISSING, "image", image_key,
-                    detail=f"imagen '{image_key}' no local; Image Manager la descargará/construirá.",
+                    detail=f"image '{image_key}' not present; the Image Manager will download/build it.",
                 ))
 
             if server.action == ServerAction.DESTROY:
                 if existing:
                     plan.changes.append(PlanChange(
                         ChangeKind.DESTROY, "server", server.name,
-                        detail=f"destruir VM '{server.name}' "
+                        detail=f"destroy VM '{server.name}' "
                                f"({existing.cpu} vCPU / {existing.mem_mb}MB).",
                     ))
                     plan.server_exists_called = True
                 else:
                     plan.changes.append(PlanChange(
                         ChangeKind.NOOP, "server", server.name,
-                        detail="no existe; nada que destruir.",
+                        detail="does not exist; nothing to destroy.",
                     ))
             elif existing:
                 plan.changes.append(PlanChange(
                     ChangeKind.UPDATE, "server", server.name,
-                    detail=f"actualizar '{server.name}' a "
+                    detail=f"update '{server.name}' to "
                            f"{server.cpu}vCPU/{server.mem}MB/{server.disk}GB "
                            f"roles={server.roles}.",
                     counterpart=existing,
@@ -139,23 +139,23 @@ class Planner:
             else:
                 plan.changes.append(PlanChange(
                     ChangeKind.CREATE, "server", server.name,
-                    detail=f"crear '{server.name}' "
+                    detail=f"create '{server.name}' "
                            f"{server.cpu}vCPU/{server.mem}MB/{server.disk}GB "
-                           f"imagen={server.image} roles={server.roles}.",
+                           f"image={server.image} roles={server.roles}.",
                 ))
 
-        # ── Redes ──
+        # ── Networks ──
         existing_nets = set(self.inventory.networks)
         for net in self.manifest.networks:
             if net.name in existing_nets:
                 plan.changes.append(PlanChange(
                     ChangeKind.UPDATE, "network", net.name,
-                    detail=f"red '{net.name}' existe (tipo={net.type.value} vlan={net.vlan}).",
+                    detail=f"network '{net.name}' exists (type={net.type.value} vlan={net.vlan}).",
                 ))
             else:
                 plan.changes.append(PlanChange(
                     ChangeKind.CREATE, "network", net.name,
-                    detail=f"crear red '{net.name}' (tipo={net.type.value} "
+                    detail=f"create network '{net.name}' (type={net.type.value} "
                            f"subnet={net.subnet} vlan={net.vlan}).",
                 ))
 
@@ -165,13 +165,13 @@ class Planner:
             if existing:
                 plan.changes.append(PlanChange(
                     ChangeKind.UPDATE, "router", router.name,
-                    detail=f"actualizar router '{router.name}' "
+                    detail=f"update router '{router.name}' "
                            f"interfaces={[i.network for i in router.interfaces]}.",
                 ))
             else:
                 plan.changes.append(PlanChange(
                     ChangeKind.CREATE, "router", router.name,
-                    detail=f"crear router '{router.name}' imagen={router.image} "
+                    detail=f"create router '{router.name}' image={router.image} "
                            f"nat={router.nat}.",
                 ))
 
@@ -181,20 +181,20 @@ class Planner:
             if existing:
                 plan.changes.append(PlanChange(
                     ChangeKind.UPDATE, "load_balancer", lb.name,
-                    detail=f"actualizar LB '{lb.name}' type={lb.type.value} "
+                    detail=f"update LB '{lb.name}' type={lb.type.value} "
                            f"listeners={len(lb.listeners)}.",
                 ))
             else:
                 plan.changes.append(PlanChange(
                     ChangeKind.CREATE, "load_balancer", lb.name,
-                    detail=f"crear LB '{lb.name}' type={lb.type.value} "
+                    detail=f"create LB '{lb.name}' type={lb.type.value} "
                            f"listeners={len(lb.listeners)}.",
                 ))
 
         return plan
 
     def _template_available(self, server) -> bool:
-        """Heurística: un template/clone base puede estar disponible sin ser ISO."""
-        # Simplificado: si el inventario no lista la imagen, asumimos que no
-        # hay template. (Se refina en fases posteriores.)
+        """Heuristic: a base template/clone may be available without being an ISO."""
+        # Simplified: if the inventory does not list the image we assume there
+        # is no template. (Refined in later phases.)
         return False

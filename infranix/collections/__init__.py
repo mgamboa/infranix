@@ -1,6 +1,6 @@
-"""Colección builtin: Packer — construye templates clonables desde ISO.
+"""Builtin collection: Packer — builds cloneable templates from ISO.
 
-Es el "paquete ejemplo" del modelo de colecciones: el core solo sabe que la
-colección tiene capability BUILD. Si Packer falla, el fallo se queda acá
-dentro: se desactiva con `infra collection disable packer` y el core sigue.
+It is the "example package" of the collection model: the core only knows the
+collection has the BUILD capability. If Packer fails, the failure stays here:
+disable it with `infra collection disable packer` and the core keeps going.
 """

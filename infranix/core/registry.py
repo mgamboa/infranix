@@ -1,13 +1,13 @@
-"""Registry de colecciones — descubrimiento y carga de providers.
+"""Collection registry — discovery and loading of providers.
 
-Descubre colecciones de dos formas:
-  1. Entry points del grupo `infranix.collections` (paquetes externos que
-     declaran en su pyproject.toml el punto de entrada).
-  2. Colecciones *builtin*: subpaquetes bajo `infranix.collections.*` que
-     implementan el protocolo (sirven como referencia y no requieren instalar).
+Discovers collections in two ways:
+  1. Entry points in the `infranix.collections` group (external packages that
+     declare the entry point in their pyproject.toml).
+  2. *Builtin* collections: subpackages under `infranix.collections.*` that
+     implement the protocol (they serve as reference and need no install).
 
-El core pregunta al registry "quién tiene capability X" y NUNCA importa
-internals de una colección: solo la clase Provider declarada.
+The core asks the registry "who has capability X" and NEVER imports a
+collection's internals: only the declared Provider class.
 """
 
 from __future__ import annotations
@@ -26,28 +26,28 @@ BUILTIN_PACKAGE = "infranix.collections"
 
 @dataclass
 class CollectionRecord:
-    """Registro de una colección descubierta."""
+    """Record of a discovered collection."""
     name: str
     version: str
     description: str
     capabilities: frozenset[Capability]
     provider: type[PluginProvider]
-    installed: bool   # True si viene de un entry point externo
+    installed: bool   # True if it comes from an external entry point
     enabled: bool = True
 
 
 class CollectionRegistry:
-    """Registro central de colecciones disponibles."""
+    """Central registry of available collections."""
 
     def __init__(self):
         self._records: dict[str, CollectionRecord] = {}
         self._disabled: set[str] = set()
 
-    # ── descubrimiento ──
+    # ── discovery ──
 
     @staticmethod
     def _discover_entrypoints() -> list[CollectionRecord]:
-        """Carga providers declarados en [project.entry-points]."""
+        """Load providers declared in [project.entry-points]."""
         records: list[CollectionRecord] = []
         try:
             eps: list[EntryPoint] = metadata.entry_points(
@@ -56,7 +56,7 @@ class CollectionRegistry:
             eps = []
         for ep in eps:
             try:
-                # value puede ser "modulo:ClassName" o solo "modulo"
+                # value may be "module:ClassName" or just "module"
                 value = ep.value
                 if ":" in value:
                     mod_name, attr = value.split(":", 1)
@@ -70,12 +70,12 @@ class CollectionRegistry:
                                             name=ep.name,
                                             installed=True))
             except Exception as e:
-                print(f"[registry] colección '{ep.name}' no cargó: {e}")
+                print(f"[registry] collection '{ep.name}' failed to load: {e}")
         return records
 
     @staticmethod
     def _discover_builtin() -> list[CollectionRecord]:
-        """Descubre subpaquetes under `infranix.collections.*`."""
+        """Discover subpackages under `infranix.collections.*`."""
         records: list[CollectionRecord] = []
         pkg_dir = Path(__file__).resolve().parent.parent / "collections"
         if not pkg_dir.exists():
@@ -91,11 +91,11 @@ class CollectionRegistry:
                         records.append(_make_record(cls, installed=False))
                         break
             except Exception as e:
-                print(f"[registry] builtin '{entry.name}' no cargó: {e}")
+                print(f"[registry] builtin '{entry.name}' failed to load: {e}")
         return records
 
     def discover(self) -> "CollectionRegistry":
-        """(Re)descubre entry points externos + builtins."""
+        """(Re)discover external entry points + builtins."""
         self._records.clear()
         for rec in self._discover_entrypoints() + self._discover_builtin():
             self._records[rec.name] = rec
@@ -119,24 +119,24 @@ class CollectionRegistry:
     def resolve(self, cap: Capability,
                 prefer: Optional[list[str]] = None
                 ) -> Optional[PluginProvider]:
-        """Devuelve la instancia de la colección con la capability pedida.
+        """Return the collection instance providing the requested capability.
 
-        `prefer`: nombres de colección a priorizar (p.ej. las declaradas en el
-        manifiesto). Si se pide explícitamente una, se usa esa. Si no, se
-        prefieren las colecciones *builtin* (de confianza del core) sobre las
-        externas; en igualdad, orden alfabético.
+        `prefer`: collection names to prioritize (e.g. those declared in the
+        manifest). If one is explicitly requested, it is used. Otherwise *builtin*
+        collections (trusted by the core) are preferred over external ones; on a
+        tie, alphabetical order.
         """
         candidates = self.with_capability(cap)
         if not candidates:
             return None
 
-        # 1) Si se pidió explícitamente una colección habilitada, priorizarla
+        # 1) If an enabled collection was explicitly requested, prioritize it
         if prefer:
             for rec in candidates:
                 if rec.name in prefer:
                     return self._instantiate(rec)
 
-        # 2) Preferir builtins (vienen con el core) salvo que la externa sea la única
+        # 2) Prefer builtins (they ship with the core) unless external is the only one
         chosen = None
         for rec in candidates:
             if rec.installed is False:      # builtin
@@ -151,7 +151,7 @@ class CollectionRegistry:
         try:
             return rec.provider()
         except Exception as e:
-            print(f"[registry] instanciando '{rec.name}': {e}")
+            print(f"[registry] instantiating '{rec.name}': {e}")
             return None
 
     # ── enable/disable ──
@@ -168,15 +168,15 @@ class CollectionRegistry:
             return True
         return False
 
-    # ── auto-instalación de requisitos (behaves like ansible-galaxy) ──
+    # ── auto-installation of requirements (behaves like ansible-galaxy) ──
 
     def ensure_required(self, requirements) -> list[str]:
-        """Asegura que las colecciones requeridas estén disponibles.
+        """Ensure the required collections are available.
 
-        `requirements`: lista de CollectionRequirement (del manifiesto).
-        Para cada una: si ya está (builtin o externa) ok; si es una builtin
-        pero está deshabilitada, la habilita; si es externa y no está, la
-        instala (pip o tar.gz) y rediscover. Devuelve lista de mensajes.
+        `requirements`: list of CollectionRequirement (from the manifest).
+        For each one: if already present (builtin or external) OK; if it is a
+        builtin but disabled, enable it; if external and missing, install it
+        (pip or tar.gz) and rediscover. Returns a list of messages.
         """
         import subprocess
         import sys
@@ -193,29 +193,29 @@ class CollectionRegistry:
         for req in requirements:
             rec = _find(req.name)
 
-            # Ya instalada + habilitada -> ok
+            # Already installed + enabled -> ok
             if rec is not None and self.is_enabled(rec.name):
-                messages.append(f"colección '{rec.name}' lista.")
+                messages.append(f"collection '{rec.name}' ready.")
                 continue
 
-            # Builtin deshabilitada -> reactivar (requisito declara que se necesita)
+            # Builtin disabled -> reactivate (requirement says it is needed)
             if rec is not None and rec.installed is False:
                 if rec.name not in self._disabled:
-                    messages.append(f"colección '{rec.name}' lista (builtin).")
+                    messages.append(f"collection '{rec.name}' ready (builtin).")
                     continue
                 self._disabled.discard(rec.name)
-                messages.append(f"colección '{rec.name}' habilitada (builtin).")
+                messages.append(f"collection '{rec.name}' enabled (builtin).")
                 continue
 
-            # Externa faltante -> instalar según source
+            # External missing -> install per source
             if req.source == CollectionSource.ARCHIVE and req.path:
                 try:
                     self._install_archive(req.path, req.name)
-                    messages.append(f"colección '{req.name}' instalada desde "
+                    messages.append(f"collection '{req.name}' installed from "
                                     f"tarball {req.path}.")
                     self.discover()
                 except Exception as e:
-                    messages.append(f"ERROR instalando '{req.name}' desde {req.path}: {e}")
+                    messages.append(f"ERROR installing '{req.name}' from {req.path}: {e}")
                 continue
 
             # pip install
@@ -226,18 +226,18 @@ class CollectionRegistry:
                     capture_output=True, text=True)
                 if res.returncode != 0:
                     messages.append(
-                        f"ERROR instalando '{req.name}': {res.stderr[-400:].strip()}")
+                        f"ERROR installing '{req.name}': {res.stderr[-400:].strip()}")
                 else:
-                    messages.append(f"colección '{req.name}' instalada "
+                    messages.append(f"collection '{req.name}' installed "
                                     f"(pip: {pkg}).")
                     self.discover()
             except Exception as e:
-                messages.append(f"ERROR instalando '{req.name}': {e}")
+                messages.append(f"ERROR installing '{req.name}': {e}")
         return messages
 
     @staticmethod
     def _pip_pkg_name(req) -> str:
-        # Si el requirement da un path de git/url/tar.gz lo pasa directo
+        # If the requirement gives a git/url/tar.gz path, pass it straight through
         if req.path and ("://" in req.path or req.path.endswith(".tar.gz")):
             return req.path
         base = req.name if req.name.startswith("infra-collection") \
@@ -248,10 +248,10 @@ class CollectionRegistry:
 
     @staticmethod
     def _install_archive(tarball: str, name: str) -> None:
-        """Instala una colección desde un tar.gz local (offline).
+        """Install a collection from a local tar.gz (offline).
 
-        Descomprime a un directorio temporal y hace `pip install` del paquete
-        dentro (o directamente del tarball si es el propio paquete python).
+        Unpacks to a temporary directory and `pip install`s the package inside
+        (or directly from the tarball if it is itself the python package).
         """
         import subprocess
         import sys
@@ -261,12 +261,12 @@ class CollectionRegistry:
 
         tb = Path(tarball)
         if not tb.exists():
-            raise FileNotFoundError(f"tarball no encontrado: {tarball}")
+            raise FileNotFoundError(f"tarball not found: {tarball}")
         with tempfile.TemporaryDirectory() as tmp:
             with tarfile.open(tb) as tar:
                 tar.extractall(tmp)
-            # buscar el paquete python con entry point, o instalar el tarball
-            # directamente (pip acepta .tar.gz de un sdist)
+            # find the python package with the entry point, or install the
+            # tarball directly (pip accepts .tar.gz of an sdist)
             res = subprocess.run(
                 [sys.executable, "-m", "pip", "install", str(tb)],
                 capture_output=True, text=True)
@@ -288,7 +288,7 @@ def _make_record(provider_cls: type[PluginProvider],
     )
 
 
-# registro global compartido (cache)
+# shared global registry (cache)
 _registry: Optional[CollectionRegistry] = None
 
 

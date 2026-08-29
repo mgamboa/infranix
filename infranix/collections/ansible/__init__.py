@@ -1,11 +1,11 @@
-"""Colección Ansible — capability: configure.
+"""Ansible collection — capability: configure.
 
-Genera inventario + roles a partir del manifiesto y (opcionalmente) ejecuta
-los playbooks contra las VMs. Envuelve `infranix.ansible_gen.AnsibleGenerator`.
-El error de Ansible queda confinado a esta colección.
+Generates inventory + roles from the manifest and (optionally) runs the
+playbooks against the VMs. Wraps `infranix.ansible_gen.AnsibleGenerator`.
+Ansible errors stay confined to this collection.
 
-Extras del PluginContext:
-  - extras["apply"]: bool — si True, ejecuta `ansible-playbook` de verdad.
+PluginContext extras:
+  - extras["apply"]: bool — if True, actually runs `ansible-playbook`.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from infranix.ansible_gen import AnsibleGenerator
 class Provider(PluginProvider):
     name = "ansible"
     version = "0.1.0"
-    description = "Configuración de VMs vía Ansible (inventario + roles)"
+    description = "VM configuration via Ansible (inventory + roles)"
     capabilities = frozenset({Capability.CONFIGURE})
 
     def require(self, ctx: PluginContext) -> list[str]:
         import shutil
         errors = []
         if shutil.which("ansible-playbook") is None:
-            errors.append("Binario 'ansible-playbook' no encontrado en PATH.")
+            errors.append("'ansible-playbook' binary not found in PATH.")
         return errors
 
     def validate(self, ctx: PluginContext, manifest) -> list[str]:
@@ -49,20 +49,20 @@ class Provider(PluginProvider):
             AnsibleGenerator(ctx.manifest, Path(ctx.out_dir)).generate()
         except Exception as e:
             return PluginReport(ok=False, action="generate-failed",
-                                message=f"Generando Ansible: {e}",
+                                message=f"Generating Ansible: {e}",
                                 errors=[str(e)])
 
         if not ctx.extras.get("apply"):
             return PluginReport(ok=True, action="generated",
-                                message=f"Ansible inventario+roles en "
+                                message=f"Ansible inventory+roles at "
                                         f"{Path(ctx.out_dir)/'ansible'}")
 
-        # Ejecutar playbooks
+        # Run playbooks
         base = Path(ctx.out_dir) / "ansible"
         inventory = base / "inventory" / "hosts.yml"
         if not inventory.exists():
             return PluginReport(ok=False, action="no-inventory",
-                                message="Inventario Ansible no encontrado.")
+                                message="Ansible inventory not found.")
         try:
             r = subprocess.run(
                 ["ansible-playbook", "-i", str(inventory),
@@ -74,12 +74,13 @@ class Provider(PluginProvider):
         except Exception as e:
             return PluginReport(ok=False, action="run-failed", message=str(e))
         return PluginReport(ok=True, action="configured",
-                            message="Playbooks Ansible ejecutados.")
+                            message="Ansible playbooks executed.")
 
     def destroy(self, ctx: PluginContext) -> PluginReport:
         return PluginReport(ok=False, action="unsupported",
-                            message="Ansible no destruye (nada que quitar "
-                                    "persistente; los recursos los borra Terraform).")
+                            message="Ansible does not destroy (nothing "
+                                    "persistent to remove; resources are "
+                                    "removed by Terraform).")
 
 
 provider = Provider

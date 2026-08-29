@@ -1,13 +1,14 @@
-"""Colección Terraform — capability: provision.
+"""Terraform collection — capability: provision.
 
-Genera y (opcionalmente) aplica recursos con Terraform (provider vmware/vsphere).
-Envuelve `infranix.terraform_gen.TerraformGenerator`. El core pide a esta
-colección el paso de provisión; si Terraform falla, el error queda confinado.
+Generates and (optionally) applies resources with Terraform (vmware/vsphere
+provider). Wraps `infranix.terraform_gen.TerraformGenerator`. The core asks
+this collection for the provision step; if Terraform fails, the error stays
+confined.
 
-Extras del PluginContext:
-  - extras["apply"]: bool — si True, ejecuta `terraform apply` de verdad.
-  - extras["datastore"]: str — datastore del hypervisor (si no, del inventory).
-  - extras["compute_cluster"]: str — path del cluster (si no, derivado).
+PluginContext extras:
+  - extras["apply"]: bool — if True, actually runs `terraform apply`.
+  - extras["datastore"]: str — hypervisor datastore (if not, from the inventory).
+  - extras["compute_cluster"]: str — cluster path (if not, derived).
 """
 
 from __future__ import annotations
@@ -23,20 +24,20 @@ from infranix.terraform_gen import TerraformGenerator
 class Provider(PluginProvider):
     name = "terraform"
     version = "0.1.0"
-    description = "Provisión de VMs vía HashiCorp/Terraform (vmware/vsphere)"
+    description = "VM provisioning via HashiCorp/Terraform (vmware/vsphere)"
     capabilities = frozenset({Capability.PROVISION})
 
-    # ── protocolo ──
+    # ── protocol ──
 
     def require(self, ctx: PluginContext) -> list[str]:
         import shutil
         errors = []
         if shutil.which("terraform") is None:
-            errors.append("Binario 'terraform' no encontrado en PATH.")
+            errors.append("'terraform' binary not found in PATH.")
         return errors
 
     def validate(self, ctx: PluginContext, manifest) -> list[str]:
-        return []  # Terraform valida la mayoría en plan/apply
+        return []  # Terraform validates most things in plan/apply
 
     def plan(self, ctx: PluginContext) -> dict:
         servers = [s.name for s in ctx.manifest.servers
@@ -68,14 +69,14 @@ class Provider(PluginProvider):
                                compute_cluster=compute_cluster).generate()
         except Exception as e:
             return PluginReport(ok=False, action="generate-failed",
-                                message=f"Generando Terraform: {e}",
+                                message=f"Generating Terraform: {e}",
                                 errors=[str(e)])
 
         if not ctx.extras.get("apply"):
             return PluginReport(ok=True, action="generated",
-                                message=f"Terraform generado en {tf_dir}")
+                                message=f"Terraform generated at {tf_dir}")
 
-        # Ejecutar apply de verdad
+        # Run apply for real
         env = self._tf_env(ctx)
         try:
             self._init(tf_dir, env)
@@ -85,7 +86,7 @@ class Provider(PluginProvider):
                                 message=f"Terraform apply: {e}",
                                 errors=[str(e)])
         return PluginReport(ok=True, action="applied",
-                            message=f"Terraform apply OK en {tf_dir}")
+                            message=f"Terraform apply OK at {tf_dir}")
 
     def destroy(self, ctx: PluginContext) -> PluginReport:
         errs = self.require(ctx)
@@ -106,7 +107,7 @@ class Provider(PluginProvider):
             return PluginReport(ok=False, action="destroy-failed",
                                 message=str(e))
         return PluginReport(ok=True, action="destroyed",
-                            message="Terraform resources destruidos.")
+                            message="Terraform resources destroyed.")
 
     # ── helpers ──
 

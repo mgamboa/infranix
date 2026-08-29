@@ -1,8 +1,8 @@
 """InfraNix — Declarative Infrastructure Orchestrator.
 
-Sistema que interpreta un manifiesto YAML declarativo y, de forma autosuficiente
-y segura, provee (Terraform), configura (Ansible), descubre (govc/API) y
-mantiene infraestructura a lo largo del tiempo.
+A system that interprets a declarative YAML manifest and, in a self-sufficient
+and secure way, provides (Terraform), configures (Ansible), discovers
+(govc/API) and maintains infrastructure over time.
 """
 
 __version__ = "0.1.0"
