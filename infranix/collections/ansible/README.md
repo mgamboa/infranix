@@ -13,7 +13,7 @@ Manifest fields consumed (`servers[].`):
 |---|---|---|
 | `servers[].roles` | `[]` | List of Ansible roles to apply to the VM |
 | `servers[].network[].ip` | — | IP used in the Ansible inventory (connection host) |
-| `servers[].vars` | `{}` | Ansible vars → written to `inventory/group_vars/<role>.yml` for each role |
+| `servers[].vars` | `{}` | Ansible vars → written to this role's `defaults/main.yml` |
 
 `ctx.extras` (set by the orchestrator):
 
@@ -78,18 +78,20 @@ Generated layout:
 ```
 out/ansible/
   inventory/hosts.yml
-  inventory/group_vars/<role>.yml
   playbooks/site.yml
   roles/webserver/tasks/main.yml
-  roles/monitoring-agent/tasks/main.yml
+  roles/webserver/defaults/main.yml        # from servers[].vars
+  roles/webserver/handlers/main.yml
+  roles/webserver/meta/main.yml
+  roles/monitoring-agent/...
 ```
 
 ## Example: RHEL 9.8 + Red Hat Satellite (subscription via `redhat_subscription`)
 
 Register the host with RHSM and install Satellite. Credentials are kept in
-`~/.infranix/.env` and injected through `servers[].vars` (→ `group_vars`), the
-generated `redhat-satellite` role uses `community.general.redhat_subscription`
-with `auto_attach`.
+`~/.infranix/.env` and injected through `servers[].vars` (→ the role's
+`defaults/main.yml`), the generated `redhat-satellite` role uses
+`community.general.redhat_subscription` with `auto_attach`.
 
 ```yaml
 # infra-satellite.yaml

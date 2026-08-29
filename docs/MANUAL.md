@@ -146,10 +146,11 @@ servers:
     action: create                       # create | update | destroy
 ```
 
-The optional `vars:` block becomes Ansible `group_vars/<role>.yml` for each
-role listed, so generated roles can consume credentials/config declared per
-server (see the `community.general.redhat_subscription` example in
-`docs/COLLECTIONS.md` / the ansible collection README).
+The optional `vars:` block becomes Ansible **role defaults** — it is written
+to `roles/<role>/defaults/main.yml` for each role a server lists, so generated
+roles can consume credentials/config declared per server (see the
+`community.general.redhat_subscription` example in the ansible collection
+`README.md`). Being defaults, they can be overridden at the group/host level.
 
 ### Lifecycle (`action`)
 
@@ -329,10 +330,15 @@ load_balancers:
 | `infra image ensure -f infra.yaml` | Ensures images (downloads missing ones) |
 | `infra image build -f infra.yaml` | Builds cloneable templates via Packer collection |
 | `infra destroy -f infra.yaml --yes` | Destroys (requires opt-in) |
-| `infra init` | Creates `~/.infranix/.env` for credentials |
+| `infra init` | Creates `~/.infranix/.env` template for credentials |
+| `infra init <name>` | Creates an InfraNix role scaffold (variables live in its `defaults/main.yml`) |
+| `infra role init <name>` | Scaffold an InfraNix role (`collections/`, `defaults/`, `infra/`) |
+| `infra role run <name>` | Run the role: reads its `defaults/main.yml` + `collections/requirements.yml`, executes `infra/infra.yaml` |
 
 ### Credentials
-Hypervisor credentials live in `~/.infranix/.env` (never in the repo):
+Hypervisor credentials can live either in `~/.infranix/.env` or, when using a
+role, in the role's `defaults/main.yml`. For a role you do **not** need
+`~/.infranix/.env`:
 
 ```
 INFRA_HYPERVISOR=esxi

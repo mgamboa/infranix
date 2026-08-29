@@ -25,7 +25,7 @@ from infranix.core.planner import Planner, Plan, ChangeKind
 from infranix.core.safety import SafetyGate, SafetyReport
 from infranix.core.registry import get_registry
 from infranix.pluginbase import Capability, PluginContext
-from infranix.models import Manifest
+from infranix.models import CollectionRequirement, Manifest
 
 
 @dataclass
@@ -77,10 +77,10 @@ class InfraNix:
 
     # ── Utilities ──
     @staticmethod
-    def load_manifest(path) -> Manifest:
+    def load_manifest(path, env: Optional[dict] = None) -> Manifest:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
-        data = resolve_vars(data)
+        data = resolve_vars(data, env=env) if env else resolve_vars(data)
         return Manifest(**data)
 
     def _cap(self, cap: Capability, what: str,
@@ -144,15 +144,20 @@ class InfraNix:
 
     # ── Main execution ──
     def run(self, manifest_path: str, out_dir: str = "out",
-            apply: bool = False) -> RunReport:
+            apply: bool = False,
+            env: Optional[dict] = None,
+            extra_collections: Optional[list] = None) -> RunReport:
         """Run the declarative file. Returns a RunReport.
 
         apply=False → only plans (dry-run, touches nothing).
         apply=True  → runs the provision/config collections.
+        env → optional var environment for ${VAR} resolution (e.g. role defaults).
+        extra_collections → optional CollectionRequirement dicts added for
+            ensure_required (e.g. from a role's collections/requirements.yml).
         """
         report = RunReport()
         try:
-            manifest = self.load_manifest(manifest_path)
+            manifest = self.load_manifest(manifest_path, env=env)
         except Exception as e:
             report.errors.append(f"Invalid manifest: {e}")
             return report
@@ -162,9 +167,16 @@ class InfraNix:
 
         # 0) Ensure required collections (behaves like ansible-galaxy regarding
         #    requirements: installs what is missing before running)
-        if manifest.collections:
+        requirements = list(manifest.collections)
+        if extra_collections:
+            requirements = requirements + [
+                c if isinstance(c, CollectionRequirement)
+                else CollectionRequirement(**c)
+                for c in extra_collections
+            ]
+        if requirements:
             try:
-                req_msgs = self.registry.ensure_required(manifest.collections)
+                req_msgs = self.registry.ensure_required(requirements)
                 for m in req_msgs:
                     if m.startswith("ERROR"):
                         report.errors.append(m)

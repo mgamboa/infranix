@@ -29,7 +29,9 @@ link in the table above — each collection's `README.md` documents its options
 and ends with an example.
 
 ```bash
-infra init                          # create ~/.infranix/.env template
+infra init                          # no name: create ~/.infranix/.env template
+infra init <name>                   # with a name: create an InfraNix role scaffold
+infra role ...                      # role management (init | run)
 infra scan                          # show current hypervisor state (read-only)
 infra collection ...                # collection management (see below)
 infra image ...                     # image/template management (see below)
@@ -101,6 +103,37 @@ Requires BOTH `--yes` and `safety.destroy: true`, otherwise it is blocked.
 
 Use `--name` to target a single image instead of all manifest images.
 
+### `infra role …` — InfraNix-native roles
+
+An **InfraNix role** is a self-contained folder (same spirit as an Ansible
+role, but for the application). Variables live in the role itself, not in
+`~/.infranix/.env`.
+
+| Command | Description |
+|---|---|
+| `init <name> [-o .]` | Scaffold a role: `collections/`, `defaults/`, `infra/` |
+| `run <name> [-o out] [--apply]` | Run a role: reads defaults + collections, executes `infra/infra.yaml` |
+
+Scaffolded layout:
+
+```
+<name>/
+  collections/requirements.yml   # collections `infra` reads & installs
+  defaults/main.yml              # your variables (credentials, network, …)
+  infra/infra.yaml               # the InfraNix manifest to execute
+  README.md
+```
+
+`infra role run <name>` loads the variables from `defaults/main.yml` (real
+process env still wins; role defaults win over `~/.infranix/.env`), installs
+any collection in `collections/requirements.yml`, and runs the manifest.
+
+```bash
+infra role init satellite            # scaffold
+# edit satellite/defaults/main.yml with your variables
+infra role run satellite --apply     # provision + configure
+```
+
 ---
 
 ## 2. Key principles
@@ -108,5 +141,6 @@ Use `--name` to target a single image instead of all manifest images.
 - **Dry-run by default** — `plan`/`run` without `--apply` execute nothing.
 - **Safety Gate last resort** — `apply`/`destroy` re-validate and refuse
   destructive actions without the right flags + `safety.destroy: true`.
-- **Never commit credentials** — everything sensitive goes in
-  `~/.infranix/.env` and is git-ignored.
+- **Variables live with the role** — `infra role run` reads them from
+  `defaults/main.yml` (no `~/.infranix/.env` needed); secrets should still
+  not be committed to git.

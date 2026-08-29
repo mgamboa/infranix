@@ -174,3 +174,131 @@ def init_collection(name: str, out: Path) -> Path:
 
     (root / "capabilities.txt").write_text(cap_help)
     return root
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# `infra role init <name>` — InfraNix-native role scaffold
+#
+# Layout (same spirit as `ansible-galaxy init <role>` but adapted to InfraNix):
+#
+#   <name>/
+#     collections/requirements.yml   # collections the app reads/installs (ansible-galaxy-style)
+#     defaults/main.yml              # default variables for the role's infra.yaml
+#     infra/infra.yaml               # the InfraNix manifest this role executes
+#     README.md
+#
+# `infra` reads `collections/requirements.yml` to know which collections this
+# role needs, merges `defaults/main.yml` as default variables, and runs the
+# `infra/infra.yaml` manifest (declarations) as the actual work.
+# ─────────────────────────────────────────────────────────────────────────
+
+ROLE_REQUIREMENTS_YML = """\
+# Collections this role needs. `infra` reads this file and auto-installs any
+# missing collection before executing infra/infra.yaml (like ansible-galaxy
+# installing requirements.yml). Add entries here as needed.
+
+collections:
+  - name: vmware
+    source: builtin
+  - name: terraform
+    source: builtin
+  - name: ansible
+    source: builtin
+"""
+
+ROLE_DEFAULTS_MAIN = """\
+# Your variables for this role live here (no ~/.infranix/.env needed).
+# ${KEY} in infra/infra.yaml resolves to the value of KEY in this file.
+# Real environment variables still take precedence if exported.
+
+# ── Hypervisor / credentials ──
+INFRA_HYPERVISOR: esxi          # vcenter | esxi | proxmox | kvm | mock
+INFRA_HOST: 192.168.2.81
+INFRA_USER: root
+INFRA_PASSWORD: your_password
+INFRA_INSECURE: 1
+INFRA_DATACENTER: ""
+INFRA_DATASTORE: datastore1
+INFRA_NETWORK: VM Network
+
+# ── Network / demo values ──
+SUBNET: 192.168.2.0/24
+GATEWAY: 192.168.2.1
+DNS: 192.168.2.1
+WEB1_IP: 192.168.2.11/24
+ROCKY_VERSION: "9.5"
+PROJECT_NAME: demo
+"""
+
+ROLE_INFRA_YAML = """\
+# InfraNix manifest — the work this role performs.
+# ${KEY} resolves from defaults/main.yml (or real env / ~/.infranix/.env).
+version: 1
+project: ${PROJECT_NAME}
+hypervisor: ${INFRA_HYPERVISOR}
+
+collections:
+  - name: vmware
+    source: builtin
+  - name: terraform
+    source: builtin
+  - name: ansible
+    source: builtin
+
+images:
+  - name: rocky-${ROCKY_VERSION}
+    distro: rocky
+    version: ${ROCKY_VERSION}
+
+servers:
+  - name: web-01
+    image: rocky-${ROCKY_VERSION}
+    cpu: 2
+    mem: 2048
+    disk: 20
+    network:
+      - name: ${INFRA_NETWORK}
+        ip: ${WEB1_IP}
+        gateway: ${GATEWAY}
+        dns: ['${DNS}']
+    roles: [webserver]
+    action: create
+"""
+
+ROLE_README = """\
+# {name} — InfraNix role
+
+A self-contained InfraNix "role": a folder that declares what to orchestrate,
+following the same layout spirit as an Ansible role.
+
+## Structure
+
+- `collections/requirements.yml` — collections `infra` reads and installs.
+- `defaults/main.yml` — default variables (injected as `${{{{VAR}}}}` in the
+  manifest).
+- `infra/infra.yaml` — the InfraNix manifest this role executes.
+
+## Run it
+
+    infra run -f {name}/infra/infra.yaml
+
+Pattern a role to deploy any stack (e.g. a `redhat-satellite` role that
+provisions a RHEL VM and subscribes/installs Satellite).
+"""
+
+
+def init_role(name: str, out: Path) -> Path:
+    """Create the `name` InfraNix role scaffold under `out`."""
+    root = (out / name).resolve()
+    files = {
+        "collections/requirements.yml": ROLE_REQUIREMENTS_YML,
+        "defaults/main.yml": ROLE_DEFAULTS_MAIN,
+        "infra/infra.yaml": ROLE_INFRA_YAML,
+        "README.md": ROLE_README.format(name=name),
+    }
+    for rel, content in files.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(content)
+    return root

@@ -11,6 +11,7 @@ Commands:
 from __future__ import annotations
 
 import sys
+from typing import Optional
 
 import click
 import yaml
@@ -21,14 +22,28 @@ from infranix.core.safety import SafetyGate
 from infranix.models import Manifest
 
 
-def _load_manifest(path: str) -> Manifest:
+def _load_manifest(path: str, defaults: Optional[dict] = None) -> Manifest:
     try:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
     except FileNotFoundError:
         raise click.ClickException(f"Manifest not found: {path}")
-    data = resolve_vars(data)
+    data = resolve_vars(data, env=_merged_env(defaults))
     return Manifest(**data)
+
+
+def _merged_env(defaults: Optional[dict] = None) -> dict:
+    """Variable env for ${VAR} resolution.
+
+    Precedence (highest → lowest): explicit process env > role defaults
+    (already injected into os.environ by role run) > ~/.infranix/.env.
+    """
+    import os
+    from infranix.config import _load_dotenv, DOTENV_PATH
+    merged = dict(defaults) if defaults else {}
+    merged.update(_load_dotenv(DOTENV_PATH))  # .env as fallback
+    merged.update(os.environ)                 # env (incl. injected defaults) wins
+    return merged
 
 
 @click.group()
@@ -38,8 +53,26 @@ def cli():
 
 
 @cli.command()
-def init():
-    """Generates ~/.infranix/.env with credentials (secure template)."""
+@click.argument("name", required=False)
+@click.option("-o", "--out", "out_dir", default=".",
+              help="Output directory for the role scaffold (when a name is given).")
+def init(name: Optional[str], out_dir: str):
+    """Initialize InfraNix.
+
+    Without a name: generates ~/.infranix/.env as a credentials template.
+    With a name: creates an InfraNix role scaffold (collections/, defaults/,
+    infra/) where your variables live in defaults/main.yml.
+    """
+    if name:
+        import infranix.skeleton as skeleton
+        from pathlib import Path as _P
+        root = skeleton.init_role(name, _P(out_dir))
+        click.echo(f"InfraNix role '{name}' created at {root}")
+        click.echo("  collections/requirements.yml - collections infra will install")
+        click.echo("  defaults/main.yml           - your variables (live here)")
+        click.echo("  infra/infra.yaml            - the manifest to execute")
+        click.echo(f"Run: infra run -f {name}/infra/infra.yaml")
+        return
     path = write_config_template()
     click.echo(f"Config template created at {path}")
     click.echo("Edit it with your ESXi credentials and then run 'infra scan'.")
@@ -426,6 +459,107 @@ def collection_install(pkg: str):
         raise click.ClickException(res.stderr[-1200:])
     get_registry().discover()
     click.echo("Installed. See 'infra collection list'.")
+
+
+@cli.group()
+def role():
+    """InfraNix role management (self-contained orchestration folders)."""
+
+
+@role.command("init")
+@click.argument("name", default="my_role")
+@click.option("-o", "--out", "out_dir", default=".")
+def role_init(name: str, out_dir: str):
+    """Initialize an InfraNix role (like ansible-galaxy init, but for infra).
+
+    Creates a folder with the standard layout for the application:
+      <name>/collections/requirements.yml   collections `infra` reads
+      <name>/defaults/main.yml              default variables
+      <name>/infra/infra.yaml               the InfraNix manifest to run
+    """
+    import infranix.skeleton as skeleton
+    from pathlib import Path as _P
+    root = skeleton.init_role(name, _P(out_dir))
+    click.echo(f"InfraNix role '{name}' created at {root}")
+    click.echo("  collections/requirements.yml - collections infra will install")
+    click.echo("  defaults/main.yml           - default variables (${VAR})")
+    click.echo("  infra/infra.yaml            - the manifest to execute")
+    click.echo("Run: infra run -f {name}/infra/infra.yaml".format(name=name))
+
+
+@role.command("run")
+@click.argument("name")
+@click.option("-o", "--out", "out_dir", default="out")
+@click.option("--apply", is_flag=True,
+              help="Apply the plan (runs Terraform/Ansible). Without it, only plans.")
+def role_run(name: str, out_dir: str, apply: bool):
+    """Run an InfraNix role: read defaults + collections, execute infra/infra.yaml.
+
+    Loads <name>/defaults/main.yml as default variables and
+    <name>/collections/requirements.yml as the collections to install, then
+    executes <name>/infra/infra.yaml with the InfraNix orchestrator.
+    """
+    from pathlib import Path as _P
+    import yaml as _yaml
+    from infranix.app import InfraNix
+
+    root = _P(name)
+    defaults_path = root / "defaults" / "main.yml"
+    reqs_path = root / "collections" / "requirements.yml"
+    infra_yaml = root / "infra" / "infra.yaml"
+
+    if not infra_yaml.exists():
+        raise click.ClickException(f"No infra/infra.yaml in role '{name}'. "
+                                   f"Use 'infra role init {name}' to scaffold one.")
+
+    defaults: dict = {}
+    if defaults_path.exists():
+        d = _yaml.safe_load(defaults_path.read_text()) or {}
+        defaults.update({str(k): str(v) for k, v in d.items()
+                         if not isinstance(v, (dict, list))})
+
+    extra_collections = []
+    if reqs_path.exists():
+        reqs = _yaml.safe_load(reqs_path.read_text()) or {}
+        extra_collections = reqs.get("collections", [])
+
+    import os as _os
+    # Variables live in defaults/main.yml: inject them so load_config() and the
+    # collections read them as if they were env vars. Real process env (already
+    # exported) wins over the role's defaults; defaults win over ~/.infranix/.env.
+    saved: dict = {}
+    for key, value in defaults.items():
+        if key not in _os.environ:
+            saved[key] = _os.environ.get(key)
+            _os.environ[key] = value
+    try:
+        app = InfraNix()
+        report = app.run(str(infra_yaml), out_dir=out_dir, apply=apply,
+                         env=_merged_env(defaults),
+                         extra_collections=extra_collections)
+    finally:
+        for key, old in saved.items():
+            if old is None:
+                _os.environ.pop(key, None)
+            else:
+                _os.environ[key] = old
+    click.echo(f"\nProject: {report.project} | hypervisor: {report.hypervisor}")
+    click.echo(f"Plan: {report.plan_summary}")
+    click.echo(f"Safety: {'APPROVED' if report.safety_approved else 'BLOCKED'}")
+    for e in report.errors:
+        click.echo(f"  ⚠  {e}")
+    if report.images_ensured:
+        click.echo("Images:")
+        for i in report.images_ensured:
+            click.echo(f"  - {i}")
+    if report.provision_log:
+        click.echo("Provision:")
+        click.echo(report.provision_log.strip()[-1500:])
+    if report.configure_log:
+        click.echo("Configuration:")
+        click.echo(report.configure_log.strip()[-1500:])
+    if report.errors and not report.safety_approved:
+        sys.exit(2)
 
 
 @cli.group()
