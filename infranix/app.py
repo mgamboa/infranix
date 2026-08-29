@@ -42,6 +42,7 @@ class RunReport:
     provision_log: str = ""
     configure_log: str = ""
     errors: list[str] = field(default_factory=list)
+    tool_messages: list[str] = field(default_factory=list)
 
     def to_markdown(self) -> str:
         lines = [f"# InfraNix Report — {self.project}",
@@ -165,7 +166,28 @@ class InfraNix:
         report.project = manifest.project
         report.hypervisor = manifest.hypervisor.value
 
-        # 0) Ensure required collections (behaves like ansible-galaxy regarding
+        # 0) Ensure required CLI tools are installed (auto-install missing ones)
+        from infranix.tools import ensure_tools
+        _COLLECTION_TOOLS = {
+            "vmware": ["govc"],
+            "terraform": ["terraform"],
+            "ansible": ["ansible-playbook"],
+            "packer": ["packer"],
+            "image": ["govc"],
+        }
+        needed_tools: set[str] = set()
+        for coll in manifest.collections:
+            needed_tools.update(_COLLECTION_TOOLS.get(coll.name, []))
+        if needed_tools:
+            try:
+                installed = ensure_tools(sorted(needed_tools))
+                for name, path in installed.items():
+                    report.tool_messages.append(f"  ✓ {name}: {path}")
+            except RuntimeError as e:
+                report.errors.append(f"Tool installation failed: {e}")
+                return report
+
+        # 1) Ensure required collections (behaves like ansible-galaxy regarding
         #    requirements: installs what is missing before running)
         requirements = list(manifest.collections)
         if extra_collections:

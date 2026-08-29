@@ -195,6 +195,10 @@ def run(file_path: str, out_dir: str, apply: bool, report_format: str):
         click.echo(report.to_markdown())
     else:
         click.echo(f"\nProject: {report.project} | hypervisor: {report.hypervisor}")
+        if report.tool_messages:
+            click.echo("Tools:")
+            for t in report.tool_messages:
+                click.echo(t)
         click.echo(f"Plan: {report.plan_summary}")
         click.echo(f"Safety: {'APPROVED' if report.safety_approved else 'BLOCKED'}")
         for e in report.errors:
@@ -250,6 +254,10 @@ def apply(file_path: str, yes: bool, out_dir: str, skip_apply: bool):
         sys.exit(2)
 
     report = app.run(file_path, out_dir=out_dir, apply=not skip_apply)
+    if report.tool_messages:
+        click.echo("Tools:")
+        for t in report.tool_messages:
+            click.echo(t)
     click.echo(f"\nPlan: {report.plan_summary}")
     click.echo(f"Safety: {'APPROVED' if report.safety_approved else 'BLOCKED'}")
     for img in report.images_ensured:
@@ -726,6 +734,10 @@ def project_run(name: str, out_dir: str, apply: bool, vault_password: str | None
             else:
                 _os.environ[key] = old
     click.echo(f"\nProject: {report.project} | hypervisor: {report.hypervisor}")
+    if report.tool_messages:
+        click.echo("Tools:")
+        for t in report.tool_messages:
+            click.echo(t)
     click.echo(f"Plan: {report.plan_summary}")
     click.echo(f"Safety: {'APPROVED' if report.safety_approved else 'BLOCKED'}")
     for e in report.errors:
