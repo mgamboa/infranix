@@ -330,22 +330,20 @@ load_balancers:
 | `infra image ensure -f infra.yaml` | Ensures images (downloads missing ones) |
 | `infra image build -f infra.yaml` | Builds cloneable templates via Packer collection |
 | `infra destroy -f infra.yaml --yes` | Destroys (requires opt-in) |
-| `infra init` | Creates `~/.infranix/.env` template for credentials |
-| `infra init <name>` | Creates an InfraNix role scaffold (variables live in its `defaults/main.yml`) |
-| `infra role init <name>` | Scaffold an InfraNix role (`collections/`, `defaults/`, `infra/`) |
-| `infra role run <name>` | Run the role: reads its `defaults/main.yml` + `collections/requirements.yml`, executes `infra/infra.yaml` |
-| `infra role vault encrypt <path> [-k KEY]` | Encrypt sensitive values in a YAML file (vault) |
-| `infra role vault decrypt <path>` | Decrypt all vault values in a YAML file (in place) |
-| `infra role vault view <path>` | Show decrypted values without modifying the file |
-| `infra role vault rekey <path>` | Re-encrypt with a new password (rotation) |
+| `infra init <name>` | Creates an InfraNix project scaffold (variables live in its `defaults/main.yml`) |
+| `infra project init <name>` | Scaffold an InfraNix project (`collections/`, `defaults/`, `infra/`) |
+| `infra project run <name>` | Run the project: reads its `defaults/main.yml` + `collections/requirements.yml`, executes `infra/infra.yaml` |
+| `infra project vault encrypt <path> [-k KEY]` | Encrypt sensitive values in a YAML file (vault) |
+| `infra project vault decrypt <path>` | Decrypt all vault values in a YAML file (in place) |
+| `infra project vault view <path>` | Show decrypted values without modifying the file |
+| `infra project vault rekey <path>` | Re-encrypt with a new password (rotation) |
 
 ### Credentials
-Hypervisor credentials can live either in `~/.infranix/.env` or, when using a
-role, in the role's `defaults/main.yml`. For a role you do **not** need
+Variables live in the project's `defaults/main.yml`. You do **not** need
 `~/.infranix/.env`.
 
-Sensitive values in `defaults/main.yml` can be encrypted with `infra role vault encrypt`
-so the file is safe to commit. `infra role run` decrypts them automatically at
+Sensitive values in `defaults/main.yml` can be encrypted with `infra project vault encrypt`
+so the file is safe to commit. `infra project run` decrypts them automatically at
 runtime — the password is read from `--vault-password`, `INFRA_VAULT_PASSWORD`
 env, or an interactive prompt.
 
@@ -362,5 +360,5 @@ INFRA_INSECURE: "1"
 - **Dry-run by default** — `plan` executes nothing; `apply` re-validates the
   Safety Gate before acting and refuses destructive changes without `--yes` and
   `safety.destroy: true`.
-- **Never commit credentials** — secrets and real IPs go in `~/.infranix/.env`,
-  never in a manifest or the repository.
+- **Variables live with the project** — secrets go in `defaults/main.yml`
+  (encrypted with vault), never in plain text in the repository.

@@ -192,8 +192,8 @@ def init_collection(name: str, out: Path) -> Path:
 # `infra/infra.yaml` manifest (declarations) as the actual work.
 # ─────────────────────────────────────────────────────────────────────────
 
-ROLE_REQUIREMENTS_YML = """\
-# Collections this role needs. `infra` reads this file and auto-installs any
+PROJECT_REQUIREMENTS_YML = """\
+# Collections this project needs. `infra` reads this file and auto-installs any
 # missing collection before executing infra/infra.yaml (like ansible-galaxy
 # installing requirements.yml). Add entries here as needed.
 
@@ -206,8 +206,8 @@ collections:
     source: builtin
 """
 
-ROLE_DEFAULTS_MAIN = """\
-# Your variables for this role live here (no ~/.infranix/.env needed).
+PROJECT_DEFAULTS_MAIN = """\
+# Your variables for this project live here (no ~/.infranix/.env needed).
 # ${KEY} in infra/infra.yaml resolves to the value of KEY in this file.
 # Real environment variables still take precedence if exported.
 
@@ -230,8 +230,8 @@ ROCKY_VERSION: "9.5"
 PROJECT_NAME: demo
 """
 
-ROLE_INFRA_YAML = """\
-# InfraNix manifest — the work this role performs.
+PROJECT_INFRA_YAML = """\
+# InfraNix manifest — the work this project performs.
 # ${KEY} resolves from defaults/main.yml (or real env / ~/.infranix/.env).
 version: 1
 project: ${PROJECT_NAME}
@@ -265,10 +265,10 @@ servers:
     action: create
 """
 
-ROLE_README = """\
-# {name} — InfraNix role
+PROJECT_README = """\
+# {name} — InfraNix project
 
-A self-contained InfraNix "role": a folder that declares what to orchestrate,
+A self-contained InfraNix project: a folder that declares what to orchestrate,
 following the same layout spirit as an Ansible role.
 
 ## Structure
@@ -276,25 +276,25 @@ following the same layout spirit as an Ansible role.
 - `collections/requirements.yml` — collections `infra` reads and installs.
 - `defaults/main.yml` — default variables (injected as `${{{{VAR}}}}` in the
   manifest).
-- `infra/infra.yaml` — the InfraNix manifest this role executes.
+- `infra/infra.yaml` — the InfraNix manifest this project executes.
 
 ## Run it
 
-    infra run -f {name}/infra/infra.yaml
+    infra project run {name}
 
-Pattern a role to deploy any stack (e.g. a `redhat-satellite` role that
+Pattern a project to deploy any stack (e.g. a `redhat-satellite` project that
 provisions a RHEL VM and subscribes/installs Satellite).
 """
 
 
-def init_role(name: str, out: Path) -> Path:
-    """Create the `name` InfraNix role scaffold under `out`."""
+def init_project(name: str, out: Path) -> Path:
+    """Create the `name` InfraNix project scaffold under `out`."""
     root = (out / name).resolve()
     files = {
-        "collections/requirements.yml": ROLE_REQUIREMENTS_YML,
-        "defaults/main.yml": ROLE_DEFAULTS_MAIN,
-        "infra/infra.yaml": ROLE_INFRA_YAML,
-        "README.md": ROLE_README.format(name=name),
+        "collections/requirements.yml": PROJECT_REQUIREMENTS_YML,
+        "defaults/main.yml": PROJECT_DEFAULTS_MAIN,
+        "infra/infra.yaml": PROJECT_INFRA_YAML,
+        "README.md": PROJECT_README.format(name=name),
     }
     for rel, content in files.items():
         target = root / rel

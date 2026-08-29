@@ -53,29 +53,24 @@ def cli():
 
 
 @cli.command()
-@click.argument("name", required=False)
-@click.option("-o", "--out", "out_dir", default=".",
-              help="Output directory for the role scaffold (when a name is given).")
-def init(name: Optional[str], out_dir: str):
-    """Initialize InfraNix.
+@click.argument("name", default="my_project")
+@click.option("-o", "--out", "out_dir", default=".")
+def init(name: str, out_dir: str):
+    """Initialize an InfraNix project.
 
-    Without a name: generates ~/.infranix/.env as a credentials template.
-    With a name: creates an InfraNix role scaffold (collections/, defaults/,
-    infra/) where your variables live in defaults/main.yml.
+    Creates a folder with the standard layout for the application:
+      <name>/collections/requirements.yml   collections `infra` reads
+      <name>/defaults/main.yml              default variables
+      <name>/infra/infra.yaml               the InfraNix manifest to run
     """
-    if name:
-        import infranix.skeleton as skeleton
-        from pathlib import Path as _P
-        root = skeleton.init_role(name, _P(out_dir))
-        click.echo(f"InfraNix role '{name}' created at {root}")
-        click.echo("  collections/requirements.yml - collections infra will install")
-        click.echo("  defaults/main.yml           - your variables (live here)")
-        click.echo("  infra/infra.yaml            - the manifest to execute")
-        click.echo(f"Run: infra run -f {name}/infra/infra.yaml")
-        return
-    path = write_config_template()
-    click.echo(f"Config template created at {path}")
-    click.echo("Edit it with your ESXi credentials and then run 'infra scan'.")
+    import infranix.skeleton as skeleton
+    from pathlib import Path as _P
+    root = skeleton.init_project(name, _P(out_dir))
+    click.echo(f"InfraNix project '{name}' created at {root}")
+    click.echo("  collections/requirements.yml - collections infra will install")
+    click.echo("  defaults/main.yml           - your variables (live here)")
+    click.echo("  infra/infra.yaml            - the manifest to execute")
+    click.echo(f"Run: infra project run {name}")
 
 
 @cli.command()
@@ -83,8 +78,8 @@ def scan():
     """Describe the current hypervisor infrastructure (read-only)."""
     config = load_config()
     if not config.configured and config.hypervisor != "mock":
-        click.echo("No credentials. Run 'infra init' and edit ~/.infranix/.env, "
-                   "or use INFRA_HYPERVISOR=mock for development.")
+        click.echo("No credentials. Create a project with 'infra init <name>', "
+                   "set variables in defaults/main.yml, or use INFRA_HYPERVISOR=mock.")
         sys.exit(1)
 
     from infranix.core.registry import get_registry
@@ -462,13 +457,13 @@ def collection_install(pkg: str):
 
 
 @cli.group()
-def role():
-    """InfraNix role management (self-contained orchestration folders)."""
+def project():
+    """InfraNix project management (self-contained orchestration folders)."""
 
 
-@role.group("vault")
+@project.group("vault")
 def vault():
-    """Encrypt/decrypt sensitive values in role defaults."""
+    """Encrypt/decrypt sensitive values in project defaults."""
 
 
 @vault.command("encrypt")
@@ -478,14 +473,14 @@ def vault():
 def vault_encrypt(path: str, key: str | None, vault_password: str | None):
     """Encrypt one or all string values in a YAML file.
 
-    PATH is typically <role>/defaults/main.yml. Encrypted values are marked
+    PATH is typically <project>/defaults/main.yml. Encrypted values are marked
     with the ``vault:`` prefix and can be decrypted with ``vault decrypt``
-    or transparently by ``role run``.
+    or transparently by ``project run``.
 
     Examples::
 
-        infranix role vault encrypt mysatellite/defaults/main.yml -k INFRA_PASSWORD
-        infranix role vault encrypt mysatellite/defaults/main.yml
+        infranix project vault encrypt mysatellite/defaults/main.yml -k INFRA_PASSWORD
+        infranix project vault encrypt mysatellite/defaults/main.yml
     """
     import yaml as _yaml
     from infranix.vault import encrypt_value, resolve_vault_password, is_vault_encrypted
@@ -520,7 +515,7 @@ def vault_encrypt(path: str, key: str | None, vault_password: str | None):
 def vault_decrypt(path: str, vault_password: str | None):
     """Decrypt all vault-encrypted values in a YAML file (in place).
 
-    PATH is typically <role>/defaults/main.yml. After decryption the file
+    PATH is typically <project>/defaults/main.yml. After decryption the file
     contains plain-text values again.
     """
     import yaml as _yaml
@@ -618,11 +613,11 @@ def vault_rekey(path: str, old_password: str | None, new_password: str | None):
         click.echo("No vault-encrypted values found.")
 
 
-@role.command("init")
-@click.argument("name", default="my_role")
+@project.command("init")
+@click.argument("name", default="my_project")
 @click.option("-o", "--out", "out_dir", default=".")
-def role_init(name: str, out_dir: str):
-    """Initialize an InfraNix role (like ansible-galaxy init, but for infra).
+def project_init(name: str, out_dir: str):
+    """Initialize an InfraNix project (like ansible-galaxy init, but for infra).
 
     Creates a folder with the standard layout for the application:
       <name>/collections/requirements.yml   collections `infra` reads
@@ -631,23 +626,23 @@ def role_init(name: str, out_dir: str):
     """
     import infranix.skeleton as skeleton
     from pathlib import Path as _P
-    root = skeleton.init_role(name, _P(out_dir))
-    click.echo(f"InfraNix role '{name}' created at {root}")
+    root = skeleton.init_project(name, _P(out_dir))
+    click.echo(f"InfraNix project '{name}' created at {root}")
     click.echo("  collections/requirements.yml - collections infra will install")
     click.echo("  defaults/main.yml           - default variables (${VAR})")
     click.echo("  infra/infra.yaml            - the manifest to execute")
-    click.echo("Run: infra run -f {name}/infra/infra.yaml".format(name=name))
+    click.echo(f"Run: infra project run {name}")
 
 
-@role.command("run")
+@project.command("run")
 @click.argument("name")
 @click.option("-o", "--out", "out_dir", default="out")
 @click.option("--apply", is_flag=True,
               help="Apply the plan (runs Terraform/Ansible). Without it, only plans.")
 @click.option("--vault-password", "-p", default=None,
               help="Vault password to decrypt secrets (default: prompt if needed)")
-def role_run(name: str, out_dir: str, apply: bool, vault_password: str | None):
-    """Run an InfraNix role: read defaults + collections, execute infra/infra.yaml.
+def project_run(name: str, out_dir: str, apply: bool, vault_password: str | None):
+    """Run an InfraNix project: read defaults + collections, execute infra/infra.yaml.
 
     Loads <name>/defaults/main.yml as default variables and
     <name>/collections/requirements.yml as the collections to install, then
@@ -670,8 +665,8 @@ def role_run(name: str, out_dir: str, apply: bool, vault_password: str | None):
     infra_yaml = root / "infra" / "infra.yaml"
 
     if not infra_yaml.exists():
-        raise click.ClickException(f"No infra/infra.yaml in role '{name}'. "
-                                   f"Use 'infra role init {name}' to scaffold one.")
+        raise click.ClickException(f"No infra/infra.yaml in project '{name}'. "
+                                   f"Use 'infra project init {name}' to scaffold one.")
 
     defaults: dict = {}
     if defaults_path.exists():

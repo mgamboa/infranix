@@ -29,9 +29,8 @@ link in the table above — each collection's `README.md` documents its options
 and ends with an example.
 
 ```bash
-infra init                          # no name: create ~/.infranix/.env template
-infra init <name>                   # with a name: create an InfraNix role scaffold
-infra role ...                      # role management (init | run)
+infra init <name>                   # create an InfraNix project scaffold
+infra project ...                   # project management (init | run | vault)
 infra scan                          # show current hypervisor state (read-only)
 infra collection ...                # collection management (see below)
 infra image ...                     # image/template management (see below)
@@ -103,16 +102,16 @@ Requires BOTH `--yes` and `safety.destroy: true`, otherwise it is blocked.
 
 Use `--name` to target a single image instead of all manifest images.
 
-### `infra role …` — InfraNix-native roles
+### `infra project …` — InfraNix projects
 
-An **InfraNix role** is a self-contained folder (same spirit as an Ansible
-role, but for the application). Variables live in the role itself, not in
-`~/.infranix/.env`.
+An **InfraNix project** is a self-contained folder that declares what to
+orchestrate — a manifest, the collections it needs, and its variables.
+Variables live in the project itself, not in `~/.infranix/.env`.
 
 | Command | Description |
 |---|---|
-| `init <name> [-o .]` | Scaffold a role: `collections/`, `defaults/`, `infra/` |
-| `run <name> [-o out] [--apply] [--vault-password PW]` | Run a role (auto-decrypts vault values) |
+| `init <name> [-o .]` | Scaffold a project: `collections/`, `defaults/`, `infra/` |
+| `run <name> [-o out] [--apply] [--vault-password PW]` | Run a project (auto-decrypts vault values) |
 
 Scaffolded layout:
 
@@ -124,17 +123,17 @@ Scaffolded layout:
   README.md
 ```
 
-`infra role run <name>` loads the variables from `defaults/main.yml` (real
-process env still wins; role defaults win over `~/.infranix/.env`), installs
+`infra project run <name>` loads the variables from `defaults/main.yml` (real
+process env still wins; project defaults win over `~/.infranix/.env`), installs
 any collection in `collections/requirements.yml`, and runs the manifest.
 
 ```bash
-infra role init satellite            # scaffold
+infra init satellite                  # scaffold
 # edit satellite/defaults/main.yml with your variables
-infra role run satellite --apply     # provision + configure
+infra project run satellite --apply   # provision + configure
 ```
 
-### `infra role vault …` — encrypt sensitive defaults
+### `infra project vault …` — encrypt sensitive defaults
 
 Encrypt sensitive values (passwords, API keys) directly in `defaults/main.yml`
 so they can be committed to git safely. Uses AES-128-CBC (Fernet) with a
@@ -162,22 +161,22 @@ Password resolution order (highest → lowest):
 
 ```bash
 # Encrypt a single key
-infra role vault encrypt satellite/defaults/main.yml -k INFRA_PASSWORD
+infra project vault encrypt satellite/defaults/main.yml -k INFRA_PASSWORD
 
 # Encrypt all string values at once
-infra role vault encrypt satellite/defaults/main.yml
+infra project vault encrypt satellite/defaults/main.yml
 
 # View decrypted values (does not change the file)
-infra role vault view satellite/defaults/main.yml
+infra project vault view satellite/defaults/main.yml
 
 # Decrypt back to plain text (in place)
-infra role vault decrypt satellite/defaults/main.yml
+infra project vault decrypt satellite/defaults/main.yml
 
 # Rotate password
-infra role vault rekey satellite/defaults/main.yml
+infra project vault rekey satellite/defaults/main.yml
 
 # Run without prompt (CI/CD)
-INFRA_VAULT_PASSWORD=secret infra role run satellite --apply
+INFRA_VAULT_PASSWORD=secret infra project run satellite --apply
 ```
 
 ---
@@ -187,6 +186,6 @@ INFRA_VAULT_PASSWORD=secret infra role run satellite --apply
 - **Dry-run by default** — `plan`/`run` without `--apply` execute nothing.
 - **Safety Gate last resort** — `apply`/`destroy` re-validate and refuse
   destructive actions without the right flags + `safety.destroy: true`.
-- **Variables live with the role** — `infra role run` reads them from
+- **Variables live with the project** — `infra project run` reads them from
   `defaults/main.yml` (no `~/.infranix/.env` needed); secrets should still
-  not be committed to git in plain text — use `infra role vault encrypt`.
+  not be committed to git in plain text — use `infra project vault encrypt`.
