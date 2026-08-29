@@ -34,6 +34,9 @@ class InfraConfig:
     network: Optional[str] = None
     insecure: bool = True
 
+    # VM credentials (root password baked into the template via kickstart)
+    root_password: Optional[str] = None
+
     # Image cache
     image_cache: Path = CONFIG_DIR / "images"
 
@@ -80,6 +83,7 @@ def load_config() -> InfraConfig:
         datastore=_get("INFRA_DATASTORE"),
         network=_get("INFRA_NETWORK"),
         insecure=(_get("INFRA_INSECURE") or "1") != "0",
+        root_password=_get("ROOT_PASSWORD"),
     )
 
 

@@ -228,14 +228,13 @@ class InfraNix:
         except Exception as e:
             report.errors.append(str(e))
 
-        # 6) Configuration (Ansible) — only in apply mode
-        if apply:
-            try:
-                ok, msg = self._do_configure(manifest, inventory, out_dir, True)
-                report.configure_log = msg
-                if not ok:
-                    report.errors.append(msg)
-            except Exception as e:
-                report.errors.append(str(e))
+        # 6) Configuration (Ansible) — always generates; runs only in apply mode
+        try:
+            ok, msg = self._do_configure(manifest, inventory, out_dir, apply)
+            report.configure_log = msg
+            if not ok:
+                report.errors.append(msg)
+        except Exception as e:
+            report.errors.append(str(e))
 
         return report

@@ -139,7 +139,7 @@ ROLE_TASKS = {
 # community.general.redhat_subscription module, then install Satellite.
 #
 # Credentials come from defaults/main.yml in this role (populated from the
-# server's `vars:` in the manifest, e.g. ${RHN_USER} / ${RHN_PASSWORD}).
+# server's `vars:` in the manifest, e.g. ${RHN_USERNAME} / ${RHN_PASSWORD}).
 - name: Register host with Red Hat Subscription Manager
   community.general.redhat_subscription:
     state: present
@@ -164,12 +164,16 @@ ROLE_TASKS = {
   ansible.builtin.package:
     name:
       - satellite
-      - satellite-installer
     state: present
   become: true
 
-- name: Run Satellite installer (long running)
-  ansible.builtin.command: satellite-installer --scenario satellite
+- name: Run Satellite installer
+  ansible.builtin.command: >
+    satellite-installer --scenario satellite
+    --foreman-initial-organization "{{ satellite_org | default('Default Organization') }}"
+    --foreman-initial-location "{{ satellite_location | default('Default Location') }}"
+    --foreman-initial-admin-username "{{ satellite_admin_user | default('admin') }}"
+    --foreman-initial-admin-password "{{ satellite_admin_password | default('changeme') }}"
   args:
     creates: /etc/satelliteserver-package-mgmt-complete
   become: true
@@ -254,7 +258,12 @@ class AnsibleGenerator:
         all_vars = {"ansible_user": "root"}  # placeholder; adjusted per environment
         for s in self.manifest.servers:
             if s.action.value != "destroy":
-                hosts[s.name] = {"ansible_host": self._host_ip(s) or ""}
+                host_vars = {"ansible_host": self._host_ip(s) or ""}
+                # Pass root_password as SSH credential for Ansible
+                if s.vars and s.vars.get("root_password"):
+                    host_vars["ansible_ssh_pass"] = s.vars["root_password"]
+                    host_vars["ansible_become_pass"] = s.vars["root_password"]
+                hosts[s.name] = host_vars
                 for role in s.roles:
                     hosts.setdefault("_role_" + role, {}).setdefault("hosts", []).append(s.name)
 

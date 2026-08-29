@@ -259,7 +259,7 @@ class PackerBuilder:
         (out_dir / "http").mkdir(parents=True, exist_ok=True)
 
         distro = self.image.distro.lower()
-        rootpw = "infranix"  # temporary, build-only; the template gets cloned
+        rootpw = self.config.root_password or "infranix"
         if distro in ("rhel", "rocky", "centos"):
             kspath.write_text(
                 self._render_ks(rootpw))
