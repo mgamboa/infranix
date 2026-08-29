@@ -56,9 +56,14 @@ class CollectionRegistry:
             eps = []
         for ep in eps:
             try:
-                mod = import_module(ep.value)
-                provider = getattr(mod, "provider", None) or getattr(
-                    mod, "Provider", None)
+                # value puede ser "modulo:ClassName" o solo "modulo"
+                value = ep.value
+                if ":" in value:
+                    mod_name, attr = value.split(":", 1)
+                else:
+                    mod_name, attr = value, "provider"
+                mod = import_module(mod_name)
+                provider = getattr(mod, attr, None)
                 if not provider:
                     continue
                 records.append(_make_record(provider,
@@ -111,17 +116,43 @@ class CollectionRegistry:
         return [r for r in self._records.values()
                 if cap in r.capabilities and self.is_enabled(r.name)]
 
-    def resolve(self, cap: Capability) -> Optional[PluginProvider]:
+    def resolve(self, cap: Capability,
+                prefer: Optional[list[str]] = None
+                ) -> Optional[PluginProvider]:
         """Devuelve la instancia de la colección con la capability pedida.
 
-        Si hay varias, se usa la primera habilitada (orden alfabético).
+        `prefer`: nombres de colección a priorizar (p.ej. las declaradas en el
+        manifiesto). Si se pide explícitamente una, se usa esa. Si no, se
+        prefieren las colecciones *builtin* (de confianza del core) sobre las
+        externas; en igualdad, orden alfabético.
         """
-        for rec in self.with_capability(cap):
-            try:
-                return rec.provider()
-            except Exception as e:
-                print(f"[registry] instanciando '{rec.name}': {e}")
-        return None
+        candidates = self.with_capability(cap)
+        if not candidates:
+            return None
+
+        # 1) Si se pidió explícitamente una colección habilitada, priorizarla
+        if prefer:
+            for rec in candidates:
+                if rec.name in prefer:
+                    return self._instantiate(rec)
+
+        # 2) Preferir builtins (vienen con el core) salvo que la externa sea la única
+        chosen = None
+        for rec in candidates:
+            if rec.installed is False:      # builtin
+                chosen = rec
+                break
+        if chosen is None:
+            chosen = candidates[0]
+        return self._instantiate(chosen)
+
+    @staticmethod
+    def _instantiate(rec: "CollectionRecord") -> Optional[PluginProvider]:
+        try:
+            return rec.provider()
+        except Exception as e:
+            print(f"[registry] instanciando '{rec.name}': {e}")
+            return None
 
     # ── enable/disable ──
 
@@ -136,6 +167,111 @@ class CollectionRegistry:
             self._disabled.add(name)
             return True
         return False
+
+    # ── auto-instalación de requisitos (behaves like ansible-galaxy) ──
+
+    def ensure_required(self, requirements) -> list[str]:
+        """Asegura que las colecciones requeridas estén disponibles.
+
+        `requirements`: lista de CollectionRequirement (del manifiesto).
+        Para cada una: si ya está (builtin o externa) ok; si es una builtin
+        pero está deshabilitada, la habilita; si es externa y no está, la
+        instala (pip o tar.gz) y rediscover. Devuelve lista de mensajes.
+        """
+        import subprocess
+        import sys
+        from infranix.models import CollectionSource
+
+        messages: list[str] = []
+
+        def _find(req_name: str):
+            return self._records.get(req_name) or next(
+                (r for r in self._records.values()
+                 if r.name.replace("infra-collection-", "") == req_name
+                 .replace("infra-collection-", "")), None)
+
+        for req in requirements:
+            rec = _find(req.name)
+
+            # Ya instalada + habilitada -> ok
+            if rec is not None and self.is_enabled(rec.name):
+                messages.append(f"colección '{rec.name}' lista.")
+                continue
+
+            # Builtin deshabilitada -> reactivar (requisito declara que se necesita)
+            if rec is not None and rec.installed is False:
+                if rec.name not in self._disabled:
+                    messages.append(f"colección '{rec.name}' lista (builtin).")
+                    continue
+                self._disabled.discard(rec.name)
+                messages.append(f"colección '{rec.name}' habilitada (builtin).")
+                continue
+
+            # Externa faltante -> instalar según source
+            if req.source == CollectionSource.ARCHIVE and req.path:
+                try:
+                    self._install_archive(req.path, req.name)
+                    messages.append(f"colección '{req.name}' instalada desde "
+                                    f"tarball {req.path}.")
+                    self.discover()
+                except Exception as e:
+                    messages.append(f"ERROR instalando '{req.name}' desde {req.path}: {e}")
+                continue
+
+            # pip install
+            pkg = self._pip_pkg_name(req)
+            try:
+                res = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", pkg],
+                    capture_output=True, text=True)
+                if res.returncode != 0:
+                    messages.append(
+                        f"ERROR instalando '{req.name}': {res.stderr[-400:].strip()}")
+                else:
+                    messages.append(f"colección '{req.name}' instalada "
+                                    f"(pip: {pkg}).")
+                    self.discover()
+            except Exception as e:
+                messages.append(f"ERROR instalando '{req.name}': {e}")
+        return messages
+
+    @staticmethod
+    def _pip_pkg_name(req) -> str:
+        # Si el requirement da un path de git/url/tar.gz lo pasa directo
+        if req.path and ("://" in req.path or req.path.endswith(".tar.gz")):
+            return req.path
+        base = req.name if req.name.startswith("infra-collection") \
+            else f"infra-collection-{req.name}"
+        if req.version:
+            base += f"=={req.version}"
+        return base
+
+    @staticmethod
+    def _install_archive(tarball: str, name: str) -> None:
+        """Instala una colección desde un tar.gz local (offline).
+
+        Descomprime a un directorio temporal y hace `pip install` del paquete
+        dentro (o directamente del tarball si es el propio paquete python).
+        """
+        import subprocess
+        import sys
+        import tarfile
+        import tempfile
+        from pathlib import Path
+
+        tb = Path(tarball)
+        if not tb.exists():
+            raise FileNotFoundError(f"tarball no encontrado: {tarball}")
+        with tempfile.TemporaryDirectory() as tmp:
+            with tarfile.open(tb) as tar:
+                tar.extractall(tmp)
+            # buscar el paquete python con entry point, o instalar el tarball
+            # directamente (pip acepta .tar.gz de un sdist)
+            res = subprocess.run(
+                [sys.executable, "-m", "pip", "install", str(tb)],
+                capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr[-500:].strip())
 
 
 def _make_record(provider_cls: type[PluginProvider],

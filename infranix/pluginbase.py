@@ -20,20 +20,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Optional
 
 from infranix.config import InfraConfig
-from infranix.models import Manifest
+from infranix.models import Capability, Manifest
 
 
-class Capability(str, Enum):
-    """Qué puede hacer una colección."""
-    SCAN = "scan"            # discovery/estado actual del hypervisor
-    PROVISION = "provision"  # crear/actualizar recursos (Terraform, cloud-init...)
-    CONFIGURE = "configure"  # configurar el software dentro de las VMs (Ansible)
-    IMAGE = "image"          # descargar/subir imágenes (ISO/OVA/cloud-image)
-    BUILD = "build"          # construir templates (Packer)
+# re-export para compatibilidad (antes Capability vivía en pluginbase)
+__all__ = [
+    "Capability", "PluginContext", "PluginReport", "PluginProvider",
+]
 
 
 @dataclass

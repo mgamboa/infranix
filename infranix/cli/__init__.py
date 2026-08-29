@@ -329,6 +329,61 @@ def collection_list():
         click.echo("Ninguna colección descubierta.")
 
 
+@collection.command("requirements")
+@click.option("-f", "--file", "file_path", default="infra.yaml")
+def collection_requirements(file_path: str):
+    """Asegura que las colecciones declaradas en el manifiesto estén listas.
+
+    Como ansible-galaxy: lee la sección 'collections' del YAML y, si falta
+    alguna, la instala (pip o tar.gz) antes de que el core la use.
+    """
+    manifest = _load_manifest(file_path)
+    if not manifest.collections:
+        click.echo("El manifiesto no declara colecciones en la sección "
+                   "'collections'. Nada que asegurar.")
+        return
+    from infranix.core.registry import get_registry
+    registry = get_registry()
+    messages = registry.ensure_required(manifest.collections)
+    failed = False
+    for m in messages:
+        if m.startswith("ERROR"):
+            failed = True
+            click.echo(f"  ⚠  {m}")
+        else:
+            click.echo(f"  ✓ {m}")
+    if failed:
+        sys.exit(2)
+
+
+@collection.command("init")
+@click.argument("name", default="my_collection")
+@click.option("-o", "--out", "out_dir", default=".")
+def collection_init(name: str, out_dir: str):
+    """Inicializa una colección, al estilo de ansible-galaxy init.
+
+    Crea un esqueleto con requirements.yml + carpeta infra_declaration/
+    (equivalente a tasks/) y un Provider que implementa el protocolo.
+    """
+    import infranix.skeleton as skeleton
+    from pathlib import Path as _P
+    skeleton.init_collection(name, _P(out_dir))
+
+
+@collection.command("install-from-archive")
+@click.argument("tarball")
+@click.argument("name")
+def collection_install_from_archive(tarball: str, name: str):
+    """Instala una colección desde un tar.gz local (offline, sin internet).
+
+    Descomprime e instala el paquete python dentro del tarball.
+    """
+    from infranix.core.registry import CollectionRegistry, get_registry
+    get_registry()._install_archive(tarball, name)
+    get_registry().discover()
+    click.echo(f"Colección '{name}' instalada desde {tarball}.")
+
+
 @collection.command("enable")
 @click.argument("name")
 def collection_enable(name: str):

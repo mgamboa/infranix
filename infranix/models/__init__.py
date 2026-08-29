@@ -61,6 +61,15 @@ class ServerAction(str, Enum):
     DESTROY = "destroy"
 
 
+class Capability(str, Enum):
+    """Qué puede hacer una colección."""
+    SCAN = "scan"            # discovery/estado actual del hypervisor
+    PROVISION = "provision"  # crear/actualizar recursos (Terraform, cloud-init...)
+    CONFIGURE = "configure"  # configurar el software dentro de las VMs (Ansible)
+    IMAGE = "image"          # descargar/subir imágenes (ISO/OVA/cloud-image)
+    BUILD = "build"          # construir templates (Packer)
+
+
 # ─────────────────────────── Modelos ───────────────────────────
 
 class SafetyPolicy(BaseModel):
@@ -148,6 +157,26 @@ class LoadBalancer(BaseModel):
     listeners: list[LBListener] = Field(default_factory=list)
 
 
+class CollectionSource(str, Enum):
+    """De dónde se instaló la colección."""
+    BUILTIN = "builtin"      # viene dentro del paquete infranix
+    PIP = "pip"              # pip install (PyPI, git, url)
+    ARCHIVE = "archive"      # tar.gz local descomprimido/instalado por el user
+
+
+class CollectionRequirement(BaseModel):
+    """Una colección que el manifiesto declara necesaria (style ansible-galaxy).
+
+    El core verifica que cada requirement esté disponible (builtin o instalada)
+    antes de ejecutar; si falta, la instala (pip o archive) como requisito.
+    """
+    name: str            # 'terraform' | 'infra-collection-proxmox' | 'proxmox'
+    version: Optional[str] = None      # version pkg / tag si aplica
+    source: CollectionSource = CollectionSource.PIP   # cómo instalarla si falta
+    path: Optional[str] = None         # para source=archive: ruta al tar.gz
+    capabilities: list[Capability] = Field(default_factory=list)  # esperadas
+
+
 class Manifest(BaseModel):
     """El manifiesto raíz del sistema declarativo."""
     version: int = 1
@@ -155,6 +184,7 @@ class Manifest(BaseModel):
     hypervisor: Hypervisor = Hypervisor.ESXI
     scan_before_apply: bool = True
     safety: SafetyPolicy = SafetyPolicy()
+    collections: list[CollectionRequirement] = Field(default_factory=list)
     images: list[Image] = Field(default_factory=list)
     servers: list[Server] = Field(default_factory=list)
     networks: list[Network] = Field(default_factory=list)

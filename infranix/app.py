@@ -83,8 +83,9 @@ class InfraNix:
         data = resolve_vars(data)
         return Manifest(**data)
 
-    def _cap(self, cap: Capability, what: str):
-        p = self.registry.resolve(cap)
+    def _cap(self, cap: Capability, what: str,
+             prefer: Optional[list] = None):
+        p = self.registry.resolve(cap, prefer=prefer)
         if p is None:
             raise RuntimeError(
                 f"Ninguna colección con capability {cap.value} habilitada "
@@ -93,9 +94,15 @@ class InfraNix:
 
     # ── Pasos (cada uno delega en una colección) ──
 
+    @staticmethod
+    def _prefer_names(manifest) -> Optional[list]:
+        """Nombres de colecciones que el manifiesto pide explícitamente."""
+        return [c.name for c in (manifest.collections or [])] or None
+
     def _do_scan(self, _manifest) -> tuple[list, Optional[object]]:
         """Escanea via colección SCAN. Devuelve (scans, inventory|None)."""
-        provider = self._cap(Capability.SCAN, "scan")
+        provider = self._cap(Capability.SCAN, "scan",
+                             prefer=self._prefer_names(_manifest))
         ctx = PluginContext(config=self.config)
         report = provider.apply(ctx)
         messages = [report.message]
@@ -105,7 +112,8 @@ class InfraNix:
         return messages, inventory
 
     def _do_images(self, manifest, inventory, out_dir, apply) -> list[str]:
-        provider = self._cap(Capability.IMAGE, "imágenes")
+        provider = self._cap(Capability.IMAGE, "imágenes",
+                             prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir)
         if not apply:
@@ -117,7 +125,8 @@ class InfraNix:
         return report.message.splitlines()
 
     def _do_provision(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
-        provider = self._cap(Capability.PROVISION, "provisión (Terraform)")
+        provider = self._cap(Capability.PROVISION, "provisión (Terraform)",
+                             prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir,
                             extras={"apply": apply})
@@ -125,7 +134,8 @@ class InfraNix:
         return report.ok, report.message
 
     def _do_configure(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
-        provider = self._cap(Capability.CONFIGURE, "configuración (Ansible)")
+        provider = self._cap(Capability.CONFIGURE, "configuración (Ansible)",
+                             prefer=self._prefer_names(manifest))
         ctx = PluginContext(config=self.config, manifest=manifest,
                             inventory=inventory, out_dir=out_dir,
                             extras={"apply": apply})
@@ -149,6 +159,18 @@ class InfraNix:
 
         report.project = manifest.project
         report.hypervisor = manifest.hypervisor.value
+
+        # 0) Asegurar colecciones requeridas (behaves like ansible regard de
+        #    requirements: instala lo que falta antes de ejecutar)
+        if manifest.collections:
+            try:
+                req_msgs = self.registry.ensure_required(manifest.collections)
+                for m in req_msgs:
+                    if m.startswith("ERROR"):
+                        report.errors.append(m)
+            except Exception as e:
+                report.errors.append(f"Resolviendo colecciones: {e}")
+                return report
 
         # 1) Scan (colección SCAN)
         try:
