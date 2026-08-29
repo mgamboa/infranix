@@ -145,21 +145,24 @@ class ImageManager:
     def _download_rhel(self, version: str, arch: str, dest: Path) -> Path:
         """Download a RHEL ISO from developers.redhat.com using RHN credentials.
 
-        Authenticates via Red Hat SSO (Keycloak OpenID Connect) and follows
-        the redirect chain to get the actual ISO download.
+        Authenticates via Red Hat SSO (Keycloak) by:
+        1. Following redirects to the SSO login page
+        2. Extracting the form action URL from the HTML
+        3. POSTing credentials to that URL
+        4. Following redirects back to get the download
         """
-        if dest.exists() and dest.stat().st_size > 0:
+        if dest.exists() and dest.stat().st_size > 1_000_000:
             return dest
 
         username = self.config.user
         password = self.config.password
         if not username or not password:
             raise RuntimeError(
-                "RHEL download requires RHN credentials (INFRA_USER + INFRA_PASSWORD).")
+                "RHEL download requires RHN credentials "
+                "(INFRA_USER + INFRA_PASSWORD).")
 
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        # Build the download URL for the developers portal
         iso_name = f"rhel-{version}-{arch}-boot.iso"
         download_url = (
             f"https://developers.redhat.com/content-gateway/file/rhel/"
@@ -171,46 +174,56 @@ class ImageManager:
 
         session = requests.Session()
 
-        # Step 1: Hit the download URL — redirects to Keycloak SSO
-        resp = session.get(download_url, allow_redirects=False, timeout=30)
+        # Step 1: Hit the download URL — follows redirects to SSO login page
+        resp = session.get(download_url, allow_redirects=True, timeout=60)
 
-        # Follow redirects to the SSO login page
-        while resp.status_code in (301, 302, 303, 307, 308):
-            redirect_url = resp.headers.get("Location")
-            if not redirect_url:
-                break
-            # If we hit the SSO login page, parse and submit credentials
-            if "sso.redhat.com" in redirect_url and "login-actions" in redirect_url:
-                resp = session.get(redirect_url, timeout=30)
-                # Submit the login form
+        # Step 2: If we're on the SSO login page, extract form action and
+        # submit credentials
+        if "sso.redhat.com" in resp.url and resp.status_code == 200:
+            html = resp.text
+            action_match = re.search(
+                r'rhd\.config\.registrationAction\s*=\s*"([^"]*)"', html)
+            if not action_match:
+                action_match = re.search(
+                    r'<form[^>]*action="([^"]*)"', html, re.IGNORECASE)
+            if not action_match:
+                action_match = re.search(
+                    r'rhd\.config\.loginUrl\s*=\s*"([^"]*)"', html)
+
+            if action_match:
+                form_action = action_match.group(1)
+                form_action = form_action.replace("&amp;", "&")
+                if form_action.startswith("/"):
+                    form_action = f"https://sso.redhat.com{form_action}"
+
+                print(f"      Submitting credentials ...")
                 login_data = {
                     "username": username,
                     "password": password,
                 }
                 resp = session.post(
-                    resp.url,
-                    data=login_data,
-                    allow_redirects=False,
-                    timeout=30,
-                )
-            else:
-                resp = session.get(redirect_url, allow_redirects=False, timeout=30)
+                    form_action, data=login_data,
+                    allow_redirects=True, timeout=60)
 
-        # If we got a redirect to the actual file, download it
-        if resp.status_code in (301, 302, 303, 307, 308):
-            final_url = resp.headers.get("Location")
-            if final_url:
-                print(f"      Downloading from CDN ...")
-                resp = session.get(final_url, stream=True, timeout=(30, 600))
+        # Step 3: Now try downloading again with the authenticated session
+        if "sso.redhat.com" not in resp.url:
+            resp = session.get(
+                download_url, allow_redirects=True, timeout=60)
 
-        if resp.status_code != 200:
+        # Step 4: Validate we got an ISO, not HTML
+        content_type = resp.headers.get("Content-Type", "")
+        if resp.status_code != 200 or "text/html" in content_type:
             raise RuntimeError(
-                f"RHEL download failed (HTTP {resp.status_code}). "
+                f"RHEL download failed (HTTP {resp.status_code}, "
+                f"Content-Type: {content_type}). "
                 f"Check your RHN credentials or download manually from "
                 f"https://developers.redhat.com/download-rhel")
 
+        # Step 5: Stream the ISO to disk
         total = int(resp.headers.get("Content-Length", 0))
         done = 0
+        if total:
+            print(f"      Downloading ISO ({total // (1024*1024)} MB) ...")
         with open(dest, "wb") as f:
             for chunk in resp.iter_content(chunk_size=1024 * 1024):
                 f.write(chunk)
@@ -219,6 +232,12 @@ class ImageManager:
                     pct = int(done * 100 / total)
                     if pct % 25 == 0:
                         print(f"      {pct}%")
+
+        if done < 1_000_000:
+            dest.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Downloaded file is too small ({done} bytes) — "
+                f"likely not a valid ISO.")
 
         print(f"      ✓ RHEL {version} downloaded ({done // (1024*1024)} MB)")
         return dest
@@ -237,6 +256,35 @@ class ImageManager:
             raise RuntimeError(f"govc datastore.upload failed: {res.stderr.strip()}")
         return f"/{dst}"
 
+    def _datastore_iso_size(self, iso_name: str) -> int:
+        """Return the size of an ISO on the datastore (0 if not found)."""
+        url = (f"https://root:{self.config.password}@{self.config.host}/sdk")
+        env = dict(os.environ)
+        env["GOVC_URL"] = url
+        env["GOVC_INSECURE"] = "true"
+        res = subprocess.run(
+            ["govc", "datastore.info", f"ISO/{iso_name}"],
+            capture_output=True, text=True, env=env, timeout=30)
+        if res.returncode != 0:
+            return 0
+        for line in res.stdout.splitlines():
+            if "Size:" in line:
+                try:
+                    return int(line.split(":")[1].strip())
+                except ValueError:
+                    pass
+        return 0
+
+    def _delete_datastore_iso(self, iso_name: str) -> None:
+        """Delete an ISO from the datastore."""
+        url = (f"https://root:{self.config.password}@{self.config.host}/sdk")
+        env = dict(os.environ)
+        env["GOVC_URL"] = url
+        env["GOVC_INSECURE"] = "true"
+        subprocess.run(
+            ["govc", "datastore.rm", f"ISO/{iso_name}"],
+            capture_output=True, text=True, env=env, timeout=60)
+
     # ── Main orchestration ──
     def ensure(self, name: str, distro: str, version: str,
                available_remotes: Optional[list[str]] = None) -> ImageManagerResult:
@@ -254,11 +302,19 @@ class ImageManager:
         if available_remotes:
             match = self._match_remote(available_remotes, distro, version)
             if match:
-                record.datastore_path = f"/ISO/{match}"
-                record.status = "available"
-                return ImageManagerResult(
-                    record, "none",
-                    f"image '{name}' already available on the datastore as '{match}'.")
+                iso_size = self._datastore_iso_size(match)
+                if iso_size > 100_000_000:  # > 100MB = valid ISO
+                    record.datastore_path = f"/ISO/{match}"
+                    record.status = "available"
+                    return ImageManagerResult(
+                        record, "none",
+                        f"image '{name}' already available on the datastore "
+                        f"as '{match}' ({iso_size // (1024*1024)} MB).")
+                else:
+                    # ISO is too small (corrupted/HTML) — delete and re-download
+                    print(f"    Found '{match}' on datastore but it's only "
+                          f"{iso_size} bytes (corrupted). Removing ...")
+                    self._delete_datastore_iso(match)
 
         # 2) Is it in the local catalog (already downloaded/uploaded before)?
         if cached and cached.get("datastore_path"):
