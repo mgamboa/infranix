@@ -26,19 +26,24 @@ Reads from `.env` / environment (passed to the playbook as connection vars):
 
 ### Auto-installing Ansible Galaxy collections
 
-When a server role needs content from Ansible Galaxy (e.g. `redhat-satellite`
-needs the `redhat.satellite` collection), this collection:
+This collection always installs the **baseline** Ansible collections that core
+content relies on — `community.general` and `ansible.posix` — plus any extra
+collection a server role needs (e.g. `redhat-satellite` needs
+`redhat.satellite`). On every `apply` it:
 
-1. Writes `out/ansible/galaxy/requirements.yml` listing those collections.
-2. On `apply`, installs them with `ansible-galaxy collection install`.
+1. Writes `out/ansible/galaxy/requirements.yml` starting with the baselines
+   and adding any role-derived collections.
+2. Installs them with `ansible-galaxy collection install -r requirements.yml`.
 
 Role → collection mapping lives in `infranix/ansible_gen.py` (`ROLE_GALAXY`).
-Only roles listed there trigger an install; plain roles (webserver, ...) never do.
+Only roles listed there add extra collections; plain roles (webserver, ...)
+still get the baselines.
 
 **Offline use:** drop collection `.tar.gz` files (e.g.
 `redhat-satellite-5.11.0.tar.gz`) into this collection's local
 `collections/` directory — i.e. `infranix/collections/ansible/collections/`.
-They are installed directly from disk first, so no internet is required.
+They are installed directly from disk first (in addition to the baselines), so
+no internet is required.
 
 > `destroy` is **unsupported** — Ansible has nothing persistent to remove;
 > resources are destroyed by Terraform.

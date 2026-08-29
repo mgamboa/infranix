@@ -9,8 +9,13 @@ Takes the declarative manifest and produces:
 Role→Ansible Galaxy collection resolution: a role is mapped to a Galaxy
 collection through `ROLE_GALAXY` (explicit entries). Any role that is not
 listed is left out, so plain roles (webserver, monitoring-agent...) never
-trigger a Galaxy install by mistake. Each unique collection is installed once
-via `ansible-galaxy collection install`.
+trigger an extra Galaxy install by mistake. Each unique collection is installed
+once via `ansible-galaxy collection install`.
+
+The *baseline* collections that Ansible core content generally relies on are
+always installed, regardless of roles: `community.general` and `ansible.posix`.
+These are prepended to the role-derived requirements so they are guaranteed
+present before any playbook runs.
 """
 
 from __future__ import annotations
@@ -21,6 +26,13 @@ import yaml
 
 from infranix.models import Manifest
 
+
+# Baseline Galaxy collections that Ansible core/content commonly needs.
+# Always installed (prepended to requirements.yml), independent of roles.
+DEFAULT_GALAXY_COLLECTIONS = [
+    "community.general",
+    "ansible.posix",
+]
 
 # Role name -> Ansible Galaxy collection(s) it depends on.
 # Add entries here for any role that needs external content from Galaxy
@@ -35,9 +47,13 @@ ROLE_GALAXY = {
 
 
 def galaxy_collections(manifest) -> list[str]:
-    """Return the unique Ansible Galaxy collections required by manifest roles."""
-    result: list[str] = []
-    seen: set[str] = set()
+    """Return the unique Ansible Galaxy collections required by a manifest.
+
+    Starts with the baseline collections (`community.general`, `ansible.posix`)
+    and adds every collection demanded by the manifest's server roles.
+    """
+    result: list[str] = [c for c in DEFAULT_GALAXY_COLLECTIONS]
+    seen: set[str] = set(result)
     for server in manifest.servers:
         for role in server.roles:
             for coll in ROLE_GALAXY.get(role, []):
