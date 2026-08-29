@@ -37,6 +37,10 @@ class InfraConfig:
     # VM credentials (root password baked into the template via kickstart)
     root_password: Optional[str] = None
 
+    # Red Hat Network credentials (for downloading RHEL ISOs)
+    rhn_username: Optional[str] = None
+    rhn_password: Optional[str] = None
+
     # RHEL mirror URL for kickstart / Packer builds
     rhel_mirror_url: Optional[str] = None
 
@@ -87,6 +91,8 @@ def load_config() -> InfraConfig:
         network=_get("INFRA_NETWORK"),
         insecure=(_get("INFRA_INSECURE") or "1") != "0",
         root_password=_get("ROOT_PASSWORD"),
+        rhn_username=_get("RHN_USERNAME"),
+        rhn_password=_get("RHN_PASSWORD"),
         rhel_mirror_url=_get("RHEL_MIRROR_URL"),
     )
 

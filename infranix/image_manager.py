@@ -154,12 +154,12 @@ class ImageManager:
         if dest.exists() and dest.stat().st_size > 1_000_000:
             return dest
 
-        username = self.config.user
-        password = self.config.password
+        username = self.config.rhn_username
+        password = self.config.rhn_password
         if not username or not password:
             raise RuntimeError(
                 "RHEL download requires RHN credentials "
-                "(INFRA_USER + INFRA_PASSWORD).")
+                "(RHN_USERNAME + RHN_PASSWORD).")
 
         dest.parent.mkdir(parents=True, exist_ok=True)
 

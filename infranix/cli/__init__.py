@@ -680,6 +680,9 @@ def project_run(name: str, out_dir: str, apply: bool, vault_password: str | None
     )
 
     root = _P(name)
+    # Resolve out_dir relative to the project directory, not CWD
+    if not _P(out_dir).is_absolute():
+        out_dir = str(root / out_dir)
     defaults_path = root / "defaults" / "main.yml"
     reqs_path = root / "collections" / "requirements.yml"
     infra_yaml = root / "infra" / "infra.yaml"

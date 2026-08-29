@@ -113,13 +113,20 @@ class Provider(PluginProvider):
 
     @staticmethod
     def _tf_env(ctx: PluginContext) -> dict:
-        return {
+        import os
+        env = dict(os.environ)  # inherit PATH and all env vars
+        env.update({
             "TF_VAR_vsphere_user": ctx.config.user or "",
             "TF_VAR_vsphere_password":
                 (ctx.config.password or "").replace("%29", ")"),
             "TF_VAR_vsphere_server": ctx.config.host or "",
             "TF_VAR_vsphere_insecure": "true",
-        }
+        })
+        # Ensure ~/.local/bin is in PATH (auto-installed tools)
+        local_bin = str(Path.home() / ".local" / "bin")
+        if local_bin not in env.get("PATH", ""):
+            env["PATH"] = local_bin + ":" + env.get("PATH", "")
+        return env
 
     @staticmethod
     def _init(tf_dir: Path, env: dict):

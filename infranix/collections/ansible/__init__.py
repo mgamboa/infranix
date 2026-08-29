@@ -105,10 +105,15 @@ class Provider(PluginProvider):
                                     message=str(e))
 
         try:
+            import os
+            env = dict(os.environ)
+            ansible_cfg = base / "ansible.cfg"
+            if ansible_cfg.exists():
+                env["ANSIBLE_CONFIG"] = str(ansible_cfg)
             r = subprocess.run(
                 ["ansible-playbook", "-i", str(inventory),
                  str(base / "playbooks" / "site.yml")],
-                capture_output=True, text=True, timeout=900)
+                capture_output=True, text=True, timeout=900, env=env)
             if r.returncode != 0:
                 return PluginReport(ok=False, action="run-failed",
                                     message=r.stderr[-800:])
