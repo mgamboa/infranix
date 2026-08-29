@@ -466,6 +466,158 @@ def role():
     """InfraNix role management (self-contained orchestration folders)."""
 
 
+@role.group("vault")
+def vault():
+    """Encrypt/decrypt sensitive values in role defaults."""
+
+
+@vault.command("encrypt")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--key", "-k", default=None, help="YAML key to encrypt (default: all string values)")
+@click.option("--vault-password", "-p", default=None, help="Vault password (default: prompt)")
+def vault_encrypt(path: str, key: str | None, vault_password: str | None):
+    """Encrypt one or all string values in a YAML file.
+
+    PATH is typically <role>/defaults/main.yml. Encrypted values are marked
+    with the ``vault:`` prefix and can be decrypted with ``vault decrypt``
+    or transparently by ``role run``.
+
+    Examples::
+
+        infranix role vault encrypt mysatellite/defaults/main.yml -k INFRA_PASSWORD
+        infranix role vault encrypt mysatellite/defaults/main.yml
+    """
+    import yaml as _yaml
+    from infranix.vault import encrypt_value, resolve_vault_password, is_vault_encrypted
+
+    pw = resolve_vault_password(vault_password)
+    if not pw:
+        raise click.ClickException("No vault password provided.")
+
+    data = _yaml.safe_load(open(path).read()) or {}
+    changed = 0
+    for k, v in data.items():
+        if key and k != key:
+            continue
+        if isinstance(v, str) and not is_vault_encrypted(v):
+            data[k] = encrypt_value(v, pw)
+            changed += 1
+            click.echo(f"  encrypted: {k}")
+        elif is_vault_encrypted(v):
+            click.echo(f"  already encrypted: {k}")
+
+    if changed:
+        import pathlib
+        pathlib.Path(path).write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False))
+        click.echo(f"\n{changed} value(s) encrypted in {path}")
+    else:
+        click.echo("Nothing to encrypt (all values already encrypted or no match).")
+
+
+@vault.command("decrypt")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--vault-password", "-p", default=None, help="Vault password (default: prompt)")
+def vault_decrypt(path: str, vault_password: str | None):
+    """Decrypt all vault-encrypted values in a YAML file (in place).
+
+    PATH is typically <role>/defaults/main.yml. After decryption the file
+    contains plain-text values again.
+    """
+    import yaml as _yaml
+    from infranix.vault import decrypt_value, resolve_vault_password, is_vault_encrypted
+
+    pw = resolve_vault_password(vault_password)
+    if not pw:
+        raise click.ClickException("No vault password provided.")
+
+    data = _yaml.safe_load(open(path).read()) or {}
+    changed = 0
+    for k, v in data.items():
+        if is_vault_encrypted(v):
+            try:
+                data[k] = decrypt_value(v, pw)
+                changed += 1
+                click.echo(f"  decrypted: {k}")
+            except ValueError as e:
+                raise click.ClickException(f"Failed to decrypt '{k}': {e}")
+
+    if changed:
+        import pathlib
+        pathlib.Path(path).write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False))
+        click.echo(f"\n{changed} value(s) decrypted in {path}")
+    else:
+        click.echo("No vault-encrypted values found.")
+
+
+@vault.command("view")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--vault-password", "-p", default=None, help="Vault password (default: prompt)")
+def vault_view(path: str, vault_password: str | None):
+    """Show decrypted values without modifying the file.
+
+    Prints each key and its decrypted (or plain-text) value.
+    """
+    import yaml as _yaml
+    from infranix.vault import decrypt_value, resolve_vault_password, is_vault_encrypted
+
+    pw = resolve_vault_password(vault_password)
+    if not pw:
+        raise click.ClickException("No vault password provided.")
+
+    data = _yaml.safe_load(open(path).read()) or {}
+    for k, v in data.items():
+        if is_vault_encrypted(v):
+            try:
+                click.echo(f"{k}: {decrypt_value(v, pw)}")
+            except ValueError as e:
+                click.echo(f"{k}: [DECRYPT FAILED: {e}]")
+        else:
+            click.echo(f"{k}: {v}")
+
+
+@vault.command("rekey")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--old-password", default=None, help="Current vault password")
+@click.option("--new-password", default=None, help="New vault password")
+def vault_rekey(path: str, old_password: str | None, new_password: str | None):
+    """Re-encrypt all vault values with a new password.
+
+    Decrypts with the old password, then re-encrypts with the new one.
+    Useful for periodic password rotation.
+    """
+    import yaml as _yaml
+    from infranix.vault import (
+        encrypt_value, decrypt_value, resolve_vault_password, is_vault_encrypted,
+    )
+
+    old_pw = resolve_vault_password(old_password, prompt=True)
+    if not old_pw:
+        raise click.ClickException("No old vault password provided.")
+    import getpass as _gp
+    new_pw = new_password or _gp.getpass("New vault password: ")
+    if not new_pw:
+        raise click.ClickException("No new vault password provided.")
+
+    data = _yaml.safe_load(open(path).read()) or {}
+    changed = 0
+    for k, v in data.items():
+        if is_vault_encrypted(v):
+            try:
+                plain = decrypt_value(v, old_pw)
+                data[k] = encrypt_value(plain, new_pw)
+                changed += 1
+                click.echo(f"  re-keyed: {k}")
+            except ValueError as e:
+                raise click.ClickException(f"Failed to decrypt '{k}': {e}")
+
+    if changed:
+        import pathlib
+        pathlib.Path(path).write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False))
+        click.echo(f"\n{changed} value(s) re-keyed in {path}")
+    else:
+        click.echo("No vault-encrypted values found.")
+
+
 @role.command("init")
 @click.argument("name", default="my_role")
 @click.option("-o", "--out", "out_dir", default=".")
@@ -492,16 +644,25 @@ def role_init(name: str, out_dir: str):
 @click.option("-o", "--out", "out_dir", default="out")
 @click.option("--apply", is_flag=True,
               help="Apply the plan (runs Terraform/Ansible). Without it, only plans.")
-def role_run(name: str, out_dir: str, apply: bool):
+@click.option("--vault-password", "-p", default=None,
+              help="Vault password to decrypt secrets (default: prompt if needed)")
+def role_run(name: str, out_dir: str, apply: bool, vault_password: str | None):
     """Run an InfraNix role: read defaults + collections, execute infra/infra.yaml.
 
     Loads <name>/defaults/main.yml as default variables and
     <name>/collections/requirements.yml as the collections to install, then
     executes <name>/infra/infra.yaml with the InfraNix orchestrator.
+
+    Values prefixed with ``vault:`` in defaults are decrypted automatically.
+    The password is read from ``--vault-password``, ``INFRA_VAULT_PASSWORD``
+    env, or an interactive prompt.
     """
     from pathlib import Path as _P
     import yaml as _yaml
     from infranix.app import InfraNix
+    from infranix.vault import (
+        decrypt_yaml_dict, resolve_vault_password, is_vault_encrypted,
+    )
 
     root = _P(name)
     defaults_path = root / "defaults" / "main.yml"
@@ -517,6 +678,20 @@ def role_run(name: str, out_dir: str, apply: bool):
         d = _yaml.safe_load(defaults_path.read_text()) or {}
         defaults.update({str(k): str(v) for k, v in d.items()
                          if not isinstance(v, (dict, list))})
+
+    # Decrypt vault-encrypted values if any exist
+    has_vault = any(is_vault_encrypted(v) for v in defaults.values())
+    if has_vault:
+        pw = resolve_vault_password(vault_password)
+        if not pw:
+            raise click.ClickException(
+                "Vault-encrypted values found but no password provided. "
+                "Use --vault-password or set INFRA_VAULT_PASSWORD.")
+        try:
+            defaults = decrypt_yaml_dict(defaults, pw)
+        except ValueError as e:
+            raise click.ClickException(f"Vault decryption failed: {e}")
+        click.echo("Vault: secrets decrypted.")
 
     extra_collections = []
     if reqs_path.exists():

@@ -112,7 +112,7 @@ role, but for the application). Variables live in the role itself, not in
 | Command | Description |
 |---|---|
 | `init <name> [-o .]` | Scaffold a role: `collections/`, `defaults/`, `infra/` |
-| `run <name> [-o out] [--apply]` | Run a role: reads defaults + collections, executes `infra/infra.yaml` |
+| `run <name> [-o out] [--apply] [--vault-password PW]` | Run a role (auto-decrypts vault values) |
 
 Scaffolded layout:
 
@@ -134,6 +134,52 @@ infra role init satellite            # scaffold
 infra role run satellite --apply     # provision + configure
 ```
 
+### `infra role vault …` — encrypt sensitive defaults
+
+Encrypt sensitive values (passwords, API keys) directly in `defaults/main.yml`
+so they can be committed to git safely. Uses AES-128-CBC (Fernet) with a
+PBKDF2-derived key — similar to `ansible-vault`.
+
+| Command | Description |
+|---|---|
+| `encrypt <path> [-k KEY] [-p PW]` | Encrypt one or all string values in a YAML file |
+| `decrypt <path> [-p PW]` | Decrypt all vault values in a YAML file (in place) |
+| `view <path> [-p PW]` | Show decrypted values without modifying the file |
+| `rekey <path> [--old-password OPW] [--new-password NPW]` | Re-encrypt with a new password (rotation) |
+
+Encrypted values look like this in `defaults/main.yml`:
+
+```yaml
+INFRA_PASSWORD: vault:a1b2c3d4e5f6.gAAAAABwX8...
+INFRA_USER: root                          # plain-text, not sensitive
+SATELLITE_PASSWORD: vault:f7e8d9c0b1a2.gAAAAABwY9...
+```
+
+Password resolution order (highest → lowest):
+  1. `--vault-password` CLI flag
+  2. `INFRA_VAULT_PASSWORD` environment variable
+  3. Interactive prompt (`getpass`)
+
+```bash
+# Encrypt a single key
+infra role vault encrypt satellite/defaults/main.yml -k INFRA_PASSWORD
+
+# Encrypt all string values at once
+infra role vault encrypt satellite/defaults/main.yml
+
+# View decrypted values (does not change the file)
+infra role vault view satellite/defaults/main.yml
+
+# Decrypt back to plain text (in place)
+infra role vault decrypt satellite/defaults/main.yml
+
+# Rotate password
+infra role vault rekey satellite/defaults/main.yml
+
+# Run without prompt (CI/CD)
+INFRA_VAULT_PASSWORD=secret infra role run satellite --apply
+```
+
 ---
 
 ## 2. Key principles
@@ -143,4 +189,4 @@ infra role run satellite --apply     # provision + configure
   destructive actions without the right flags + `safety.destroy: true`.
 - **Variables live with the role** — `infra role run` reads them from
   `defaults/main.yml` (no `~/.infranix/.env` needed); secrets should still
-  not be committed to git.
+  not be committed to git in plain text — use `infra role vault encrypt`.

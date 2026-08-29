@@ -334,18 +334,28 @@ load_balancers:
 | `infra init <name>` | Creates an InfraNix role scaffold (variables live in its `defaults/main.yml`) |
 | `infra role init <name>` | Scaffold an InfraNix role (`collections/`, `defaults/`, `infra/`) |
 | `infra role run <name>` | Run the role: reads its `defaults/main.yml` + `collections/requirements.yml`, executes `infra/infra.yaml` |
+| `infra role vault encrypt <path> [-k KEY]` | Encrypt sensitive values in a YAML file (vault) |
+| `infra role vault decrypt <path>` | Decrypt all vault values in a YAML file (in place) |
+| `infra role vault view <path>` | Show decrypted values without modifying the file |
+| `infra role vault rekey <path>` | Re-encrypt with a new password (rotation) |
 
 ### Credentials
 Hypervisor credentials can live either in `~/.infranix/.env` or, when using a
 role, in the role's `defaults/main.yml`. For a role you do **not** need
-`~/.infranix/.env`:
+`~/.infranix/.env`.
 
-```
-INFRA_HYPERVISOR=esxi
-INFRA_HOST=your-esxi-ip        # IP/hostname of your ESXi/vCenter
-INFRA_USER=root
-INFRA_PASSWORD=your_password   # your credentials
-INFRA_INSECURE=1
+Sensitive values in `defaults/main.yml` can be encrypted with `infra role vault encrypt`
+so the file is safe to commit. `infra role run` decrypts them automatically at
+runtime — the password is read from `--vault-password`, `INFRA_VAULT_PASSWORD`
+env, or an interactive prompt.
+
+```yaml
+# defaults/main.yml (safe to commit)
+INFRA_HYPERVISOR: esxi
+INFRA_HOST: your-esxi-ip
+INFRA_USER: root
+INFRA_PASSWORD: vault:a1b2c3d4.gAAAAABwX8...   # encrypted
+INFRA_INSECURE: "1"
 ```
 
 ### Key principle

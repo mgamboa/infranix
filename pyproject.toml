@@ -8,6 +8,7 @@ dependencies = [
     "click>=8.0",
     "PyYAML>=6.0",
     "tabulate>=0.9",
+    "cryptography>=41.0",
 ]
 
 [project.scripts]
