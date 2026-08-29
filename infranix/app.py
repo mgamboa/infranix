@@ -127,34 +127,18 @@ class InfraNix:
         return report.message.splitlines()
 
     def _do_build_templates(self, manifest, inventory, out_dir) -> list[str]:
-        """Build cloneable templates from ISOs using Packer.
-
-        After the ISO is on the datastore, this step runs Packer to create
-        a VM template that Terraform can clone from.
-        """
+        """Build cloneable templates from ISOs using Packer."""
         from infranix.image_manager import ImageManager
         messages: list[str] = []
         im = ImageManager(self.config)
+        datastore_isos = inventory.images if inventory else []
 
         for img in manifest.images:
-            # Check if a template already exists on the hypervisor
-            # by scanning for VMs/templates matching the image name
-            scan_provider = self._cap(Capability.SCAN, "scan",
-                                      prefer=self._prefer_names(manifest))
-            from infranix.pluginbase import PluginContext as _PC
-            sctx = _PC(config=self.config)
-            sreport = scan_provider.apply(sctx)
-            existing_templates = []
-            if sreport.ok and sreport.data:
-                inv = sreport.data.get("inventory")
-                if inv:
-                    existing_templates = [t for t in inv.templates] \
-                        if hasattr(inv, 'templates') else []
-
-            # Build the template if it doesn't exist
+            matched_iso = im._match_remote(datastore_isos, img.distro, img.version)
             result = im.build_template(
-                img.name, img.distro, img.version)
-            messages.append(f"{img.name}: {result.action} — {result.message}")
+                img.name, img.distro, img.version,
+                datastore_iso=matched_iso)
+            messages.append(f"{img.name}: {result.action} -- {result.message}")
 
         return messages
 
