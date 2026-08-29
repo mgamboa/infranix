@@ -40,7 +40,7 @@ class Capability(str, Enum):
 class PluginContext:
     """Contexto que el core entrega a cada colección en cada llamada."""
     config: InfraConfig
-    manifest: Manifest
+    manifest: Optional[Any] = None
     inventory: Any = None            # Inventory (del scanner) si disponible
     out_dir: str = "out"             # raíz de artefactos
     image: Optional[Any] = None      # Image model, en colecciones de imagen/build

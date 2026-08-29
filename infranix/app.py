@@ -1,30 +1,30 @@
-"""InfraNix — Aplicación orquestadora de alto nivel.
+"""InfraNix — Orquestador de alto nivel (core delgado).
 
-Expone una única API que "corre el archivo YAML declarativo": carga el
-manifiesto, lo valida, escanea el estado actual, calcula el plan de cambios,
-aplica el Safety Gate, asegura imágenes, genera Terraform + Ansible y (en modo
-aplicativo) los ejecuta. El resultado se devuelve como un reporte estructurado.
+Este módulo es EL CORE: casi no contiene lógica de provisión, solo orquesta.
+Cada capacidad (scan, provision, configure, image, build) la resuelve en una
+colección vía el registry. Si una colección falla, el error queda confinado
+ahí — el core sigue operativo y reporta qué colección falló.
 
-Este es el cerebro que automatiza el trabajo a partir de la declaración.
+Funciones del core únicamente:
+  - cargar/validar el manifiesto
+  - planear el diff (Planner)
+  - aplicar el Safety Gate
+  - resolver y llamar colecciones por capability
+  - ensamblar el RunReport
 """
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from infranix.config import InfraConfig, load_config, resolve_vars
-from infranix.adapters.discovery import Inventory, make_scanner
 from infranix.core.planner import Planner, Plan, ChangeKind
 from infranix.core.safety import SafetyGate, SafetyReport
 from infranix.core.registry import get_registry
 from infranix.pluginbase import Capability, PluginContext
-from infranix.terraform_gen import TerraformGenerator
-from infranix.ansible_gen import AnsibleGenerator
 from infranix.models import Manifest
 
 
@@ -36,10 +36,11 @@ class RunReport:
     plan_summary: str = ""
     safety_approved: bool = False
     safety_summary: str = ""
+    scans: list[str] = field(default_factory=list)
     images_ensured: list[str] = field(default_factory=list)
     artifacts_generated: bool = False
-    terraform_executed: bool = False
-    terraform_log: str = ""
+    provision_log: str = ""
+    configure_log: str = ""
     errors: list[str] = field(default_factory=list)
 
     def to_markdown(self) -> str:
@@ -48,16 +49,19 @@ class RunReport:
                  f"**Plan:** {self.plan_summary}",
                  f"**Safety:** {'APROBADO' if self.safety_approved else 'BLOQUEADO'}",
                  f"  {self.safety_summary}"]
+        if self.scans:
+            lines.append("**Discovery:**")
+            lines += [f"  - {s}" for s in self.scans]
         if self.images_ensured:
             lines.append("**Imágenes:**")
             lines += [f"  - {i}" for i in self.images_ensured]
         lines.append(f"**Artefactos generados:** {'sí' if self.artifacts_generated else 'no'}")
-        lines.append(f"**Terraform ejecutado:** {'sí' if self.terraform_executed else 'no'}")
-        if self.terraform_log:
-            lines.append("**Log Terraform (últimas líneas):**")
-            lines.append("```")
-            lines.append(self.terraform_log.strip())
-            lines.append("```")
+        if self.provision_log:
+            lines.append("**Provisión (Terraform):**")
+            lines.append(f"  {self.provision_log}")
+        if self.configure_log:
+            lines.append("**Configuración (Ansible):**")
+            lines.append(f"  {self.configure_log}")
         if self.errors:
             lines.append("**Errores:**")
             lines += [f"  - {e}" for e in self.errors]
@@ -69,8 +73,9 @@ class InfraNix:
 
     def __init__(self, config: Optional[InfraConfig] = None):
         self.config = config or load_config()
+        self.registry = get_registry()
 
-    # ── Utilidades ──
+    # ── Utilería ──
     @staticmethod
     def load_manifest(path) -> Manifest:
         with open(path, "r") as f:
@@ -78,17 +83,62 @@ class InfraNix:
         data = resolve_vars(data)
         return Manifest(**data)
 
-    def _scan(self) -> Inventory:
-        return make_scanner(self.config).scan()
+    def _cap(self, cap: Capability, what: str):
+        p = self.registry.resolve(cap)
+        if p is None:
+            raise RuntimeError(
+                f"Ninguna colección con capability {cap.value} habilitada "
+                f"para {what}. Ver 'infra collection list'.")
+        return p
+
+    # ── Pasos (cada uno delega en una colección) ──
+
+    def _do_scan(self, _manifest) -> tuple[list, Optional[object]]:
+        """Escanea via colección SCAN. Devuelve (scans, inventory|None)."""
+        provider = self._cap(Capability.SCAN, "scan")
+        ctx = PluginContext(config=self.config)
+        report = provider.apply(ctx)
+        messages = [report.message]
+        inventory = report.data.get("inventory") if report.ok else None
+        if not report.ok:
+            messages = report.errors or [report.message]
+        return messages, inventory
+
+    def _do_images(self, manifest, inventory, out_dir, apply) -> list[str]:
+        provider = self._cap(Capability.IMAGE, "imágenes")
+        ctx = PluginContext(config=self.config, manifest=manifest,
+                            inventory=inventory, out_dir=out_dir)
+        if not apply:
+            return [f"{p['image']}: (dry-run) se asegurará al aplicar"
+                    for p in provider.plan(ctx).get("ensure", [])
+                    if p["status"] == "needed"] or \
+                   ["(dry-run) imágenes requeridas se asegurarán en apply"]
+        report = provider.apply(ctx)
+        return report.message.splitlines()
+
+    def _do_provision(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
+        provider = self._cap(Capability.PROVISION, "provisión (Terraform)")
+        ctx = PluginContext(config=self.config, manifest=manifest,
+                            inventory=inventory, out_dir=out_dir,
+                            extras={"apply": apply})
+        report = provider.apply(ctx)
+        return report.ok, report.message
+
+    def _do_configure(self, manifest, inventory, out_dir, apply) -> tuple[bool, str]:
+        provider = self._cap(Capability.CONFIGURE, "configuración (Ansible)")
+        ctx = PluginContext(config=self.config, manifest=manifest,
+                            inventory=inventory, out_dir=out_dir,
+                            extras={"apply": apply})
+        report = provider.apply(ctx)
+        return report.ok, report.message
 
     # ── Ejecución principal ──
     def run(self, manifest_path: str, out_dir: str = "out",
-            apply: bool = False, yes: bool = False) -> RunReport:
+            apply: bool = False) -> RunReport:
         """Corre el archivo declarativo. Devuelve un RunReport.
 
         apply=False → solo planifica (dry-run, sin tocar nada).
-        apply=True  → genera artefactos y, si está aprobado, ejecuta
-                      Terraform/Ansible.
+        apply=True  → ejecuta las colecciones provisión/configuración.
         """
         report = RunReport()
         try:
@@ -100,14 +150,18 @@ class InfraNix:
         report.project = manifest.project
         report.hypervisor = manifest.hypervisor.value
 
-        # 1) Escanear estado actual
+        # 1) Scan (colección SCAN)
         try:
-            inventory = self._scan()
+            scans, inventory = self._do_scan(manifest)
+            report.scans = scans
         except Exception as e:
-            report.errors.append(f"Error escaneando: {e}")
+            report.errors.append(str(e))
             return report
 
         # 2) Planear diff
+        if inventory is None:
+            report.errors.append("Sin inventario: no se puede planear.")
+            return report
         plan: Plan = Planner(manifest, inventory).plan()
         report.plan_summary = plan.summary()
 
@@ -115,93 +169,39 @@ class InfraNix:
         gate: SafetyReport = SafetyGate(manifest.safety).evaluate(manifest, plan)
         report.safety_approved = gate.allowed
         report.safety_summary = gate.summary()
-
         if not gate.allowed:
             report.errors.append("Plan bloqueado por el Safety Gate.")
             report.errors.append(report.safety_summary)
             return report
 
-        # 4) Asegurar imágenes (delegado a la colección con capability IMAGE)
+        # 4) Imágenes (solo si las pide el manifiesto)
         if manifest.images:
-            img_provider = get_registry().resolve(Capability.IMAGE)
-            ctx = PluginContext(config=self.config, manifest=manifest,
-                                inventory=inventory, out_dir=out_dir)
-            if not img_provider:
-                report.errors.append(
-                    "Ninguna colección con capability IMAGE habilitada "
-                    "(¿`infra collection list`?).")
-                return report
-            if apply:
-                res = img_provider.apply(ctx)
-                report.images_ensured = res.message.splitlines()
+            report.images_ensured = self._do_images(
+                manifest, inventory, out_dir, apply)
+
+        # 5) Provición (Terraform) — genera siempre; aplica si `apply`
+        try:
+            should_run = plan.changes and any(
+                c.kind in (ChangeKind.CREATE, ChangeKind.UPDATE)
+                for c in plan.changes)
+            ok, msg = self._do_provision(manifest, inventory, out_dir,
+                                         apply and should_run)
+            report.provision_log = msg
+            if ok:
+                report.artifacts_generated = True
             else:
-                report.images_ensured = [
-                    f"{p['image']}: (dry-run) se asegurará durante el apply"
-                    for p in img_provider.plan(ctx).get("ensure", [])
-                    if p["status"] == "needed"] or [
-                    "(dry-run) imágenes requeridas se asegurarán en apply"]
-
-        # 5) Generar artefactos (siempre que el plan esté aprobado, para revisión)
-        try:
-            datastore = (inventory.datastores[0].name
-                         if inventory.datastores else "delldatastore")
-            cluster_host = (inventory.compute_cluster_host
-                            or "esxi01.example.local")
-            tf_dir = Path(out_dir) / "terraform"
-            TerraformGenerator(
-                manifest, tf_dir, datastore=datastore,
-                compute_cluster="/ha-datacenter/host/" + cluster_host,
-            ).generate()
-            AnsibleGenerator(manifest, Path(out_dir)).generate()
-            report.artifacts_generated = True
+                report.errors.append(msg)
         except Exception as e:
-            report.errors.append(f"Error generando artefactos: {e}")
+            report.errors.append(str(e))
 
-        # Si no se aplica, terminamos (artefactos ya generados, nada ejecutado)
-        if not apply:
-            return report
+        # 6) Configuración (Ansible) — solo en modo aplicativo
+        if apply:
+            try:
+                ok, msg = self._do_configure(manifest, inventory, out_dir, True)
+                report.configure_log = msg
+                if not ok:
+                    report.errors.append(msg)
+            except Exception as e:
+                report.errors.append(str(e))
 
-        # 6) Ejecutar Terraform + (si `apply`)
-        destructive = [c for c in plan.changes if c.kind == ChangeKind.DESTROY]
-        if destructive and not yes:
-            report.errors.append(
-                "Operaciones destructivas requieren --yes y safety.destroy.")
-            return report
-
-        try:
-            log = self._terraform_apply(tf_dir)
-            report.terraform_executed = True
-            report.terraform_log = log
-        except Exception as e:
-            report.errors.append(f"Terraform: {e}")
         return report
-
-    # ── Ejecución de Terraform (helper) ──
-    def _terraform_apply(self, tf_dir: Path) -> str:
-        env = dict(self._tf_env())
-        logs = []
-        cmd_init = ["terraform", "init", "-input=false", "-upgrade"]
-        r_init = subprocess.run(cmd_init, cwd=str(tf_dir), env=env,
-                                capture_output=True, text=True, timeout=600)
-        logs.append(r_init.stdout[-2000:])
-        if r_init.returncode != 0:
-            raise RuntimeError(r_init.stderr[-800:])
-
-        cmd_apply = (["terraform", "apply", "-auto-approve",
-                      f"-var=vsphere_user={env['TF_VAR_vsphere_user']}",
-                      f"-var=vsphere_password={env['TF_VAR_vsphere_password']}",
-                      f"-var=vsphere_server={env['TF_VAR_vsphere_server']}"])
-        r_apply = subprocess.run(cmd_apply, cwd=str(tf_dir), env=env,
-                                 capture_output=True, text=True, timeout=900)
-        logs.append(r_apply.stdout[-3000:])
-        if r_apply.returncode != 0:
-            raise RuntimeError(r_apply.stderr[-1000:])
-        return "\n".join(logs)
-
-    def _tf_env(self) -> dict:
-        return {
-            "TF_VAR_vsphere_user": self.config.user or "",
-            "TF_VAR_vsphere_password": (self.config.password or "").replace("%29", ")"),
-            "TF_VAR_vsphere_server": self.config.host or "",
-            "TF_VAR_vsphere_insecure": "true",
-        }

@@ -10,21 +10,15 @@ Comandos:
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
-from pathlib import Path
 
 import click
 import yaml
 
 from infranix.config import load_config, write_config_template, resolve_vars
-from infranix.adapters.discovery import make_scanner
 from infranix.core.planner import Planner, ChangeKind
 from infranix.core.safety import SafetyGate
 from infranix.models import Manifest
-from infranix.terraform_gen import TerraformGenerator
-from infranix.ansible_gen import AnsibleGenerator
 
 
 def _load_manifest(path: str) -> Manifest:
@@ -60,10 +54,20 @@ def scan():
                    "o usa INFRA_HYPERVISOR=mock para desarrollo.")
         sys.exit(1)
 
-    scanner = make_scanner(config)
+    from infranix.core.registry import get_registry
+    from infranix.pluginbase import Capability, PluginContext
+    scanner = get_registry().resolve(Capability.SCAN)
+    if scanner is None:
+        raise click.ClickException("Sin colección SCAN habilitada.")
     click.echo(f"Escaneando {config.hypervisor} @ {config.host or 'mock'}...")
     try:
-        inv = scanner.scan()
+        ctx = PluginContext(config=config)
+        sreport = scanner.apply(ctx)
+        if not sreport.ok:
+            raise click.ClickException("; ".join(sreport.errors or [sreport.message]))
+        inv = sreport.data["inventory"]
+    except click.ClickException:
+        raise
     except Exception as e:
         raise click.ClickException(f"Error escaneando: {e}")
 
@@ -94,14 +98,28 @@ def scan():
 @click.option("-o", "--out", "out_dir", default="out",
               help="Directorio de salida de Terraform/Ansible (def: out)")
 def plan(file_path: str, out_dir: str):
-    """Calcula el diff manifest vs actual y muestra el plan (no ejecuta)."""
+    """Calcula el diff manifest vs actual y muestra el plan (no ejecuta).
+
+    El scan y la generación de artefactos se delegan en las colecciones
+    SCAN/PROVISION/CONFIGURE vía el orquestador.
+    """
+    from infranix.app import InfraNix
+    from infranix.core.planner import Planner, ChangeKind
+    from infranix.core.registry import get_registry
+    from infranix.pluginbase import Capability, PluginContext
+
     manifest = _load_manifest(file_path)
     config = load_config()
-    scanner = make_scanner(config)
-    try:
-        inventory = scanner.scan()
-    except Exception as e:
-        raise click.ClickException(f"Error escaneando: {e}")
+
+    # Scan via colección SCAN
+    scan_provider = get_registry().resolve(Capability.SCAN)
+    if scan_provider is None:
+        raise click.ClickException("Sin colección SCAN habilitada.")
+    sctx = PluginContext(config=config)
+    sreport = scan_provider.apply(sctx)
+    if not sreport.ok:
+        raise click.ClickException("; ".join(sreport.errors or [sreport.message]))
+    inventory = sreport.data["inventory"]
 
     planner = Planner(manifest, inventory)
     plan = planner.plan()
@@ -132,22 +150,16 @@ def plan(file_path: str, out_dir: str):
                    "en el manifiesto antes de continuar.")
         sys.exit(2)
 
-    # Generación de artefactos (solo si el plan es aprobado)
+    # Generación de artefactos (delegado a PROVISION/CONFIGURE con apply=False)
     try:
-        datastore = inventory.datastores[0].name if inventory.datastores else "delldatastore"
-        cluster_host = inventory.compute_cluster_host or "esxi01.example.local"
-        tf_gen = TerraformGenerator(
-            manifest,
-            Path(out_dir) / "terraform",
-            datastore=datastore,
-            compute_cluster="/ha-datacenter/host/" + cluster_host,
-        )
-        tf_dir = tf_gen.generate()
-        ans_dir = AnsibleGenerator(manifest, Path(out_dir)).generate()
-        click.echo(f"\nArtefactos generados:")
-        click.echo(f"  Terraform: {tf_dir}")
-        click.echo(f"  Ansible:   {ans_dir}")
-        click.echo("\nEjecuta 'infra apply' para desplegar (tras re-validar seguridad).")
+        app = InfraNix(config)
+        rep2 = app.run(file_path, out_dir=out_dir, apply=False)
+        if rep2.errors:
+            for e in rep2.errors:
+                click.echo(f"\n⚠  {e}")
+        else:
+            click.echo("\nArtefactos generados en out/ (terraform + ansible).")
+            click.echo("Ejecuta 'infra apply' para desplegar (tras re-validar seguridad).")
     except Exception as e:
         click.echo(f"\n⚠  No se pudieron generar artefactos: {e}")
 
@@ -159,11 +171,10 @@ def plan(file_path: str, out_dir: str):
 @click.option("-o", "--out", "out_dir", default="out")
 @click.option("--apply", is_flag=True,
               help="Aplica el plan (ejecuta Terraform/Ansible). Sin esto, solo planifica.")
-@click.option("--yes", is_flag=True, help="Confirma operaciones destructivas.")
 @click.option("--report", "report_format", default="text",
               type=click.Choice(["text", "markdown"]),
               help="Formato del reporte (def: text).")
-def run(file_path: str, out_dir: str, apply: bool, yes: bool, report_format: str):
+def run(file_path: str, out_dir: str, apply: bool, report_format: str):
     """Corre el archivo YAML declarativo de principio a fin (la aplicación).
 
     Valida, escanea, planea, aplica el Safety Gate y, con --apply, genera
@@ -171,7 +182,7 @@ def run(file_path: str, out_dir: str, apply: bool, yes: bool, report_format: str
     """
     from infranix.app import InfraNix
     app = InfraNix()
-    report = app.run(file_path, out_dir=out_dir, apply=apply, yes=yes)
+    report = app.run(file_path, out_dir=out_dir, apply=apply)
 
     if report_format == "markdown":
         click.echo(report.to_markdown())
@@ -187,9 +198,9 @@ def run(file_path: str, out_dir: str, apply: bool, yes: bool, report_format: str
             click.echo("Imágenes:")
             for i in report.images_ensured:
                 click.echo(f"  - {i}")
-        if report.terraform_log:
-            click.echo("Terraform ejecutado (últimas líneas):")
-            click.echo(report.terraform_log.strip()[-1500:])
+        if report.provision_log:
+            click.echo("Provisión:")
+            click.echo(report.provision_log.strip()[-1500:])
 
     if report.errors and not report.safety_approved:
         sys.exit(2)
@@ -203,98 +214,49 @@ def run(file_path: str, out_dir: str, apply: bool, yes: bool, report_format: str
 @click.option("--skip-apply", is_flag=True,
               help="Genera artefactos pero NO ejecuta Terraform/Ansible.")
 def apply(file_path: str, yes: bool, out_dir: str, skip_apply: bool):
-    """Ejecuta el plan (re-valida Safety Gate antes de actuar)."""
+    """Ejecuta el plan (re-valida Safety Gate antes de actuar).
+
+    Delega en el orquestador (app.run), que a su vez delega en las
+    colecciones SCAN/IMAGE/PROVISION/CONFIGURE. El fallo de cualquier
+    colección queda confinado y el reporte lo señala.
+    """
+    from infranix.app import InfraNix
+    app = InfraNix()
+
+    # Re-validación de operaciones destructivas antes de tocar nada
     manifest = _load_manifest(file_path)
-    config = load_config()
-    scanner = make_scanner(config)
-    try:
-        inventory = scanner.scan()
-    except Exception as e:
-        raise click.ClickException(f"Error escaneando: {e}")
-
-    planner = Planner(manifest, inventory)
-    plan = planner.plan()
-    gate = SafetyGate(manifest.safety)
-    report = gate.evaluate(manifest, plan)
-
-    if not report.allowed:
-        click.echo("BLOQUEADO por Safety Gate. Nada se ejecutó.")
-        click.echo(report.summary())
-        sys.exit(2)
-
+    from infranix.core.planner import Planner, ChangeKind
+    from infranix.core.registry import get_registry
+    from infranix.pluginbase import Capability, PluginContext
+    scan_provider = get_registry().resolve(Capability.SCAN)
+    if scan_provider is None:
+        raise click.ClickException("Sin colección SCAN habilitada.")
+    sctx = PluginContext(config=load_config())
+    inv = scan_provider.apply(sctx)
+    if not inv.ok:
+        raise click.ClickException(inv.message)
+    plan = Planner(manifest, inv.data["inventory"]).plan()
     destructive = [c for c in plan.changes if c.kind == ChangeKind.DESTROY]
     if destructive and not yes:
         click.echo("Operaciones destructivas requieren --yes y safety.destroy: true.")
         click.echo("Nada se ejecutó.")
         sys.exit(2)
 
-    click.echo("Safety Gate APROBADO. Aplicando plan...")
-
-    # 1) Asegurar imágenes (delegado a colección IMAGE)
-    if manifest.images:
-        from infranix.pluginbase import Capability, PluginContext
-        from infranix.core.registry import get_registry
-        click.echo("\n[1/3] Asegurando imágenes...")
-        provider = get_registry().resolve(Capability.IMAGE)
-        if provider is None:
-            click.echo("  [!!] Sin colección IMAGE habilitada; saltando imágenes.")
-        else:
-            ctx = PluginContext(config=config, manifest=manifest, inventory=inventory)
-            for line in provider.apply(ctx).message.splitlines():
-                click.echo(f"  - {line}")
-
-    # 2) Generar Terraform + Ansible
-    datastore = inventory.datastores[0].name if inventory.datastores else "delldatastore"
-    cluster_host = inventory.compute_cluster_host or "esxi01.example.local"
-    tf_dir = Path(out_dir) / "terraform"
-    TerraformGenerator(
-        manifest, tf_dir,
-        datastore=datastore,
-        compute_cluster="/ha-datacenter/host/" + cluster_host,
-    ).generate()
-    AnsibleGenerator(manifest, Path(out_dir)).generate()
-    click.echo(f"\n[2/3] Artefactos generados: {tf_dir} y {Path(out_dir)}/ansible")
-
-    if skip_apply:
-        click.echo("\n[3/3] --skip-apply indicado: no se ejecuta Terraform/Ansible.")
-        click.echo("Revisa los artefactos en out/ y ejecuta manualmente:")
-        click.echo(f"  cd {tf_dir} && terraform plan/apply")
-        click.echo(f"  ansible-playbook -i {Path(out_dir)}/ansible/inventory/hosts.yml "
-                   f"{Path(out_dir)}/ansible/playbooks/site.yml")
-        return
-
-    # 3) Terraform init + apply
-    click.echo("\n[3/3] Ejecutando Terraform...")
-    _run_terraform(tf_dir, config)
-    click.echo("\nTerraform completado.")
-
-
-
-def _run_terraform(tf_dir: Path, config):
-    """Ejecuta terraform init + apply con las credenciales del .env."""
-    env = dict(os.environ)
-    env["TF_VAR_vsphere_user"] = config.user or ""
-    env["TF_VAR_vsphere_password"] = (config.password or "").replace("%29", ")")
-    env["TF_VAR_vsphere_server"] = config.host or ""
-    env["TF_VAR_vsphere_insecure"] = "true"
-
-    def _run(cmd):
-        click.echo(f"\n$ {' '.join(cmd)}")
-        res = subprocess.run(cmd, cwd=str(tf_dir), env=env,
-                             capture_output=True, text=True, timeout=600)
-        click.echo(res.stdout[-3000:] if res.stdout else "")
-        if res.returncode != 0:
-            click.echo(res.stderr[-2000:])
-            raise click.ClickException(
-                f"Terraform falló ({cmd[1]}):\n{res.stderr[-800:]}")
-        return res
-
-    _run(["terraform", "init", "-input=false", "-upgrade"])
-    # apply con auto-approve (ya validamos Safety Gate)
-    _run(["terraform", "apply", "-auto-approve",
-          f"-var=vsphere_user={env['TF_VAR_vsphere_user']}",
-          f"-var=vsphere_password={env['TF_VAR_vsphere_password']}",
-          f"-var=vsphere_server={env['TF_VAR_vsphere_server']}"])
+    report = app.run(file_path, out_dir=out_dir, apply=not skip_apply)
+    click.echo(f"\nPlan: {report.plan_summary}")
+    click.echo(f"Safety: {'APROBADO' if report.safety_approved else 'BLOQUEADO'}")
+    for img in report.images_ensured:
+        click.echo(f"  - {img}")
+    if report.provision_log:
+        click.echo("Provisión:")
+        click.echo(f"  {report.provision_log}")
+    if report.configure_log:
+        click.echo("Configuración:")
+        click.echo(f"  {report.configure_log}")
+    for e in report.errors:
+        click.echo(f"  ⚠  {e}")
+    if report.errors and not report.safety_approved:
+        sys.exit(2)
 
 
 @cli.command()
@@ -302,10 +264,20 @@ def _run_terraform(tf_dir: Path, config):
 @click.option("--yes", is_flag=True, help="Confirmación obligatoria para destruir.")
 def destroy(file_path: str, yes: bool):
     """Destruye recursos declarados con action: destroy. MUY MUY cuidadoso."""
+    from infranix.core.planner import Planner, ChangeKind
+    from infranix.core.registry import get_registry
+    from infranix.pluginbase import Capability, PluginContext
+
     manifest = _load_manifest(file_path)
     config = load_config()
-    scanner = make_scanner(config)
-    inventory = scanner.scan()
+    scan_provider = get_registry().resolve(Capability.SCAN)
+    if scan_provider is None:
+        raise click.ClickException("Sin colección SCAN habilitada.")
+    sctx = PluginContext(config=config)
+    sreport = scan_provider.apply(sctx)
+    if not sreport.ok:
+        raise click.ClickException("; ".join(sreport.errors or [sreport.message]))
+    inventory = sreport.data["inventory"]
 
     planner = Planner(manifest, inventory)
     plan = planner.plan()
@@ -421,9 +393,15 @@ def image_ensure(file_path: str, name: str | None):
     manifest = _load_manifest(file_path)
     config = load_config()
 
-    from infranix.adapters.discovery import make_scanner
-    scanner = make_scanner(config)
-    inventory = scanner.scan()
+    from infranix.pluginbase import PluginContext as _PC
+    scan_provider = get_registry().resolve(Capability.SCAN)
+    if scan_provider is None:
+        raise click.ClickException("Sin colección SCAN habilitada.")
+    sctx = _PC(config=config)
+    sreport = scan_provider.apply(sctx)
+    if not sreport.ok:
+        raise click.ClickException("; ".join(sreport.errors or [sreport.message]))
+    inventory = sreport.data["inventory"]
 
     provider = get_registry().resolve(Capability.IMAGE)
     if provider is None:
