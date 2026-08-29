@@ -113,6 +113,7 @@ class Server(BaseModel):
     disk: int = Field(default=20, ge=1)      # GB
     network: list[NetworkInterface] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=list)
+    vars: dict[str, object] = Field(default_factory=dict)  # role/host vars for Ansible
     action: ServerAction = ServerAction.CREATE
 
 

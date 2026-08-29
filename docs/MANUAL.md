@@ -140,8 +140,16 @@ servers:
     roles:                               # what Ansible must configure
       - webserver
       - monitoring-agent
+    vars:                                # (optional) Ansible vars for those roles
+      rhn_username: ${RHN_USER}          # e.g. subscription credentials
+      rhn_password: ${RHN_PASSWORD}
     action: create                       # create | update | destroy
 ```
+
+The optional `vars:` block becomes Ansible `group_vars/<role>.yml` for each
+role listed, so generated roles can consume credentials/config declared per
+server (see the `community.general.redhat_subscription` example in
+`docs/COLLECTIONS.md` / the ansible collection README).
 
 ### Lifecycle (`action`)
 

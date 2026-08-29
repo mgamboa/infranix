@@ -134,6 +134,46 @@ ROLE_TASKS = {
   ansible.builtin.debug:
     msg: "kubernetes role to be implemented"
 """,
+    "redhat-satellite": """\
+# Register the host with Red Hat Subscription Manager (RHSM) using the
+# community.general.redhat_subscription module, then install Satellite.
+#
+# Credentials come from inventory/group_vars/redhat-satellite.yml, which is
+# populated from the server's `vars:` in the manifest (e.g. ${RHN_USER}).
+- name: Register host with Red Hat Subscription Manager
+  community.general.redhat_subscription:
+    state: present
+    username: "{{ rhn_username | default('') }}"
+    password: "{{ rhn_password | default('') }}"
+    auto_attach: true
+  when: rhn_username is defined and rhn_username | length > 0
+  become: true
+
+- name: Enable required repositories for Satellite
+  community.general.rhsm_repository:
+    name: "{{ item }}"
+    state: enabled
+  loop:
+    - rhel-{{ ansible_distribution_major_version }}-for-x86_64-baseos-rpms
+    - rhel-{{ ansible_distribution_major_version }}-for-x86_64-appstream-rpms
+    - satellite-{{ ansible_distribution_major_version }}-for-rhel-{{ ansible_distribution_major_version }}-x86_64-rpms
+  become: true
+  when: rhn_username is defined and rhn_username | length > 0
+
+- name: Install Satellite server packages
+  ansible.builtin.package:
+    name:
+      - satellite
+      - satellite-installer
+    state: present
+  become: true
+
+- name: Run Satellite installer (long running)
+  ansible.builtin.command: satellite-installer --scenario satellite
+  args:
+    creates: /etc/satelliteserver-package-mgmt-complete
+  become: true
+""",
 }
 
 
@@ -182,6 +222,28 @@ class AnsibleGenerator:
         inv_dir.mkdir(parents=True, exist_ok=True)
         (inv_dir / "hosts.yml").write_text(
             yaml.dump(inventory, default_flow_style=False, sort_keys=False))
+
+        # ── Group vars per role (from servers[].vars) ──
+        # Lays out inventory/group_vars/<role>.yml so role tasks can consume
+        # credentials/config declared on each server (e.g. redhat_subscription
+        # username/password). Undefined ${VAR} placeholders are skipped.
+        group_vars_dir = inv_dir / "group_vars"
+        role_vars: dict[str, dict[str, object]] = {}
+        raw_vars: dict[str, dict[str, object]] = {}
+        for s in self.manifest.servers:
+            if not s.vars:
+                continue
+            for role in s.roles:
+                role_vars.setdefault(role, {}).update(s.vars)
+        if role_vars:
+            group_vars_dir.mkdir(parents=True, exist_ok=True)
+            for role, vdict in role_vars.items():
+                raw_vars[role] = vdict
+                # drop unresolved ${...} so they don't leak into generated files
+                clean = {k: v for k, v in vdict.items()
+                         if not isinstance(v, str) or "${" not in v}
+                (group_vars_dir / f"{role}.yml").write_text(
+                    yaml.dump(clean, default_flow_style=False, sort_keys=False))
 
         # ── site.yml playbook ──
         site_play = {
