@@ -42,7 +42,8 @@ def _rocky(distro: str, version: str) -> str:
 
 def _rhel(distro: str, version: str) -> Optional[str]:
     # RHEL requires a subscription; the ISOs are not free for public download.
-    # An internal mirror is used (e.g. the ISO already on the datastore).
+    # Returns None — the ImageManager will try the developers portal with
+    # RHN credentials if available.
     return None
 
 
@@ -141,6 +142,87 @@ class ImageManager:
                             print(f"      {pct}%")
         return dest
 
+    def _download_rhel(self, version: str, arch: str, dest: Path) -> Path:
+        """Download a RHEL ISO from developers.redhat.com using RHN credentials.
+
+        Authenticates via Red Hat SSO (Keycloak OpenID Connect) and follows
+        the redirect chain to get the actual ISO download.
+        """
+        if dest.exists() and dest.stat().st_size > 0:
+            return dest
+
+        username = self.config.user
+        password = self.config.password
+        if not username or not password:
+            raise RuntimeError(
+                "RHEL download requires RHN credentials (INFRA_USER + INFRA_PASSWORD).")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build the download URL for the developers portal
+        iso_name = f"rhel-{version}-{arch}-boot.iso"
+        download_url = (
+            f"https://developers.redhat.com/content-gateway/file/rhel/"
+            f"Red_Hat_Enterprise_Linux_{version}/{iso_name}"
+        )
+
+        print(f"    Downloading RHEL {version} from developers.redhat.com ...")
+        print(f"      Authenticating as {username} ...")
+
+        session = requests.Session()
+
+        # Step 1: Hit the download URL — redirects to Keycloak SSO
+        resp = session.get(download_url, allow_redirects=False, timeout=30)
+
+        # Follow redirects to the SSO login page
+        while resp.status_code in (301, 302, 303, 307, 308):
+            redirect_url = resp.headers.get("Location")
+            if not redirect_url:
+                break
+            # If we hit the SSO login page, parse and submit credentials
+            if "sso.redhat.com" in redirect_url and "login-actions" in redirect_url:
+                resp = session.get(redirect_url, timeout=30)
+                # Submit the login form
+                login_data = {
+                    "username": username,
+                    "password": password,
+                }
+                resp = session.post(
+                    resp.url,
+                    data=login_data,
+                    allow_redirects=False,
+                    timeout=30,
+                )
+            else:
+                resp = session.get(redirect_url, allow_redirects=False, timeout=30)
+
+        # If we got a redirect to the actual file, download it
+        if resp.status_code in (301, 302, 303, 307, 308):
+            final_url = resp.headers.get("Location")
+            if final_url:
+                print(f"      Downloading from CDN ...")
+                resp = session.get(final_url, stream=True, timeout=(30, 600))
+
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"RHEL download failed (HTTP {resp.status_code}). "
+                f"Check your RHN credentials or download manually from "
+                f"https://developers.redhat.com/download-rhel")
+
+        total = int(resp.headers.get("Content-Length", 0))
+        done = 0
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                f.write(chunk)
+                done += len(chunk)
+                if total:
+                    pct = int(done * 100 / total)
+                    if pct % 25 == 0:
+                        print(f"      {pct}%")
+
+        print(f"      ✓ RHEL {version} downloaded ({done // (1024*1024)} MB)")
+        return dest
+
     # ── Upload to the datastore via govc ──
     def _upload_iso(self, local_path: Path, target_name: str) -> str:
         url = (f"https://root:{self.config.password}@{self.config.host}/sdk")
@@ -189,11 +271,38 @@ class ImageManager:
         # 3) Download + upload
         try:
             url = self.resolve_source(distro, version)
-        except ValueError as e:
+        except ValueError:
+            # No public mirror (e.g. RHEL) — try downloading from developers
+            # portal with RHN credentials
+            if distro.lower() == "rhel":
+                local_name = self._iso_local_name(name, distro, version)
+                local_path = self.cache_dir / local_name
+                try:
+                    local_path = self._download_rhel(version, "x86_64", local_path)
+                except Exception as e:
+                    record.status = "missing"
+                    return ImageManagerResult(record, "none",
+                                              f"RHEL download failed: {e}")
+                try:
+                    remote = self._upload_iso(local_path, local_name)
+                    record.local_path = str(local_path)
+                    record.datastore_path = remote
+                    record.status = "available"
+                    catalog[name] = vars(record)
+                    self._save_catalog(catalog)
+                    return ImageManagerResult(
+                        record, "uploaded",
+                        f"RHEL {version} downloaded from developers.redhat.com "
+                        f"and uploaded to {remote}.")
+                except Exception as e:
+                    record.status = "downloading"
+                    return ImageManagerResult(record, "none",
+                                              f"Upload failed (download cached): {e}")
             record.status = "template-required"
             return ImageManagerResult(
                 record, "template-required",
-                f"No free source for {distro} {version}: {e}")
+                f"No free source for {distro} {version}: use an internal mirror "
+                f"or upload the ISO manually to the datastore.")
 
         local_name = self._iso_local_name(name, distro, version)
         local_path = self.cache_dir / local_name
