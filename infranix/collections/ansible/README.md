@@ -21,7 +21,24 @@ Manifest fields consumed (`servers[].`):
 | `apply` | `true/false` | `true` → actually runs `ansible-playbook`; `false` → generate only |
 
 Reads from `.env` / environment (passed to the playbook as connection vars):
-`INFRA_USER` (SSH user). Binary requirement: `ansible-playbook` on `PATH`.
+`INFRA_USER` (SSH user). Binary requirements: `ansible-playbook` and
+`ansible-galaxy` on `PATH`.
+
+### Auto-installing Ansible Galaxy collections
+
+When a server role needs content from Ansible Galaxy (e.g. `redhat-satellite`
+needs the `redhat.satellite` collection), this collection:
+
+1. Writes `out/ansible/galaxy/requirements.yml` listing those collections.
+2. On `apply`, installs them with `ansible-galaxy collection install`.
+
+Role → collection mapping lives in `infranix/ansible_gen.py` (`ROLE_GALAXY`).
+Only roles listed there trigger an install; plain roles (webserver, ...) never do.
+
+**Offline use:** drop collection `.tar.gz` files (e.g.
+`redhat-satellite-5.11.0.tar.gz`) into this collection's local
+`collections/` directory — i.e. `infranix/collections/ansible/collections/`.
+They are installed directly from disk first, so no internet is required.
 
 > `destroy` is **unsupported** — Ansible has nothing persistent to remove;
 > resources are destroyed by Terraform.

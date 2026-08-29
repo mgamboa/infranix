@@ -1,13 +1,16 @@
 """Ansible generator — Phase 1.
 
 Takes the declarative manifest and produces:
-  - inventory/hosts.yml   (groups by role, hosts with connection vars)
-  - playbooks/site.yml    (applies roles to each group)
-  - roles/<rol>/          (skeleton of feasible base roles)
+  - inventory/hosts.yml        (groups by role, hosts with connection vars)
+  - playbooks/site.yml         (applies roles to each group)
+  - roles/<role>/              (skeleton of feasible base roles)
+  - galaxy/requirements.yml    (Ansible Galaxy collections the roles need)
 
-The listed roles: webserver, postgres, monitoring-agent, wazuh-server,
-wazuh-indexer, wazuh-dashboard, kubernetes. Each one is a skeleton with
-tasks/main.yml ready to extend.
+Role→Ansible Galaxy collection resolution: a role is mapped to a Galaxy
+collection through `ROLE_GALAXY` (explicit entries). Any role that is not
+listed is left out, so plain roles (webserver, monitoring-agent...) never
+trigger a Galaxy install by mistake. Each unique collection is installed once
+via `ansible-galaxy collection install`.
 """
 
 from __future__ import annotations
@@ -17,6 +20,31 @@ from pathlib import Path
 import yaml
 
 from infranix.models import Manifest
+
+
+# Role name -> Ansible Galaxy collection(s) it depends on.
+# Add entries here for any role that needs external content from Galaxy
+# (e.g. `redhat-satellite` needs the `redhat.satellite` collection).
+ROLE_GALAXY = {
+    "redhat-satellite": ["redhat.satellite"],
+    "satellite": ["redhat.satellite"],
+    "redhat-registration": ["redhat.rhel_system_roles"],
+    "rhel-system-roles": ["redhat.rhel_system_roles"],
+    "community-kubernetes": ["community.kubernetes"],
+}
+
+
+def galaxy_collections(manifest) -> list[str]:
+    """Return the unique Ansible Galaxy collections required by manifest roles."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for server in manifest.servers:
+        for role in server.roles:
+            for coll in ROLE_GALAXY.get(role, []):
+                if coll not in seen:
+                    seen.add(coll)
+                    result.append(coll)
+    return result
 
 
 # Task skeleton per role
@@ -155,6 +183,16 @@ class AnsibleGenerator:
             t_dir = roles_dir / role / "tasks"
             t_dir.mkdir(parents=True, exist_ok=True)
             (t_dir / "main.yml").write_text(tasks)
+
+        # ── Galaxy requirements (Ansible collections the roles need) ──
+        colls = galaxy_collections(self.manifest)
+        galaxy_dir = base / "galaxy"
+        if colls:
+            galaxy_dir.mkdir(parents=True, exist_ok=True)
+            (galaxy_dir / "requirements.yml").write_text(
+                yaml.dump(
+                    {"collections": [{"name": c} for c in colls]},
+                    default_flow_style=False, sort_keys=False))
 
         # markdown on how to use it
         (base / "README.md").write_text(

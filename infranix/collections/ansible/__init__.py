@@ -63,6 +63,47 @@ class Provider(PluginProvider):
         if not inventory.exists():
             return PluginReport(ok=False, action="no-inventory",
                                 message="Ansible inventory not found.")
+
+        # Install Ansible Galaxy collections required by the roles
+        galaxy_req = base / "galaxy" / "requirements.yml"
+        if galaxy_req.exists():
+            # Offline fallback: collect local collection tarballs placed under
+            # this collection's own `collections/` directory, so a tar.gz such
+            # as redhat-satellite-5.11.0.tar.gz can be used without downloading.
+            local_collections = Path(__file__).resolve().parent / "collections"
+            local_tarballs = sorted(local_collections.glob("*.tar.gz")) \
+                if local_collections.is_dir() else []
+            galaxy_installed = False
+            for tb in local_tarballs:
+                try:
+                    g = subprocess.run(
+                        ["ansible-galaxy", "collection", "install", str(tb)],
+                        capture_output=True, text=True, timeout=900)
+                    if g.returncode == 0:
+                        galaxy_installed = True
+                    else:
+                        return PluginReport(
+                            ok=False, action="galaxy-failed",
+                            message=g.stderr[-800:] or
+                                    f"ansible-galaxy install failed for {tb.name}.")
+                except Exception as e:
+                    return PluginReport(ok=False, action="galaxy-failed",
+                                        message=str(e))
+            if not galaxy_installed:
+                try:
+                    g = subprocess.run(
+                        ["ansible-galaxy", "collection", "install", "-r",
+                         str(galaxy_req)],
+                        capture_output=True, text=True, timeout=900)
+                    if g.returncode != 0:
+                        return PluginReport(
+                            ok=False, action="galaxy-failed",
+                            message=g.stderr[-800:] or
+                                    "ansible-galaxy install failed.")
+                except Exception as e:
+                    return PluginReport(ok=False, action="galaxy-failed",
+                                        message=str(e))
+
         try:
             r = subprocess.run(
                 ["ansible-playbook", "-i", str(inventory),
