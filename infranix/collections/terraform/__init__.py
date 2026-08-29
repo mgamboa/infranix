@@ -66,7 +66,8 @@ class Provider(PluginProvider):
         try:
             TerraformGenerator(ctx.manifest, tf_dir,
                                datastore=datastore,
-                               compute_cluster=compute_cluster).generate()
+                               compute_cluster=compute_cluster,
+                               config=ctx.config).generate()
         except Exception as e:
             return PluginReport(ok=False, action="generate-failed",
                                 message=f"Generating Terraform: {e}",

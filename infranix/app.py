@@ -129,6 +129,7 @@ class InfraNix:
     def _do_build_templates(self, manifest, inventory, out_dir) -> list[str]:
         """Build cloneable templates from ISOs using Packer."""
         from infranix.image_manager import ImageManager
+        import subprocess, os
         messages: list[str] = []
         im = ImageManager(self.config)
         datastore_isos = inventory.images if inventory else []
@@ -145,7 +146,20 @@ class InfraNix:
                 root_pw = s.vars["root_password"]
                 break
 
+        # Check if templates already exist on ESXi
+        env = dict(os.environ)
+        env["GOVC_URL"] = f"https://{self.config.user}:{self.config.password}@{self.config.host}/sdk"
+        env["GOVC_INSECURE"] = "true"
+
         for img in manifest.images:
+            # Check if VM/template with this name already exists
+            res = subprocess.run(
+                ["govc", "vm.info", img.name],
+                capture_output=True, text=True, env=env, timeout=30)
+            if res.returncode == 0 and img.name in res.stdout:
+                messages.append(f"{img.name}: already exists on hypervisor -- skipping Packer build")
+                continue
+
             matched_iso = im._match_remote(datastore_isos, img.distro, img.version)
             result = im.build_template(
                 img.name, img.distro, img.version,

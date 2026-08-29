@@ -87,13 +87,6 @@ data "vsphere_host" "host" {
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
-# ── Clone templates ──
-{% for s in servers %}
-data "vsphere_virtual_machine" "template_{{ s.name }}" {
-  name          = "{{ s.image }}"
-  datacenter_id = data.vsphere_datacenter.dc.id
-}
-{% endfor %}
 # ── Resources (VMs) ──
 {% for s in servers %}
 resource "vsphere_virtual_machine" "{{ s.name }}" {
@@ -116,8 +109,9 @@ resource "vsphere_virtual_machine" "{{ s.name }}" {
     thin_provisioned = true
   }
 
+  # Clone from template/VM
   clone {
-    template_uuid = data.vsphere_virtual_machine.template_{{ s.name }}.id
+    template_uuid = "{{ s.template_uuid }}"
 {% if s.ip %}
     customize {
       linux_options {
@@ -163,11 +157,12 @@ class TerraformGenerator:
     }
 
     def __init__(self, manifest: Manifest, out_dir: Path, datastore: str,
-                 compute_cluster: str):
+                 compute_cluster: str, config=None):
         self.manifest = manifest
         self.out_dir = Path(out_dir)
         self.datastore = datastore
         self.compute_cluster = compute_cluster
+        self.config = config
         self.env = jinja2.Environment(trim_blocks=True, lstrip_blocks=True)
 
     def _servers_ctx(self):
@@ -178,6 +173,8 @@ class TerraformGenerator:
                 ip = (s.network[0].ip or "").split("/")[0]
                 gateway = s.network[0].gateway or ""
                 dns = s.network[0].dns or []
+            # Look up template UUID from ESXi
+            template_uuid = self._get_template_uuid(s.image)
             out.append({
                 "name": s.name,
                 "image": s.image,
@@ -188,8 +185,28 @@ class TerraformGenerator:
                 "ip": ip,
                 "gateway": gateway,
                 "dns": dns,
+                "template_uuid": template_uuid,
             })
         return out
+
+    def _get_template_uuid(self, image_name: str) -> str:
+        """Get the UUID of a template/VM on ESXi by name."""
+        import subprocess, os, json
+        env = dict(os.environ)
+        env["GOVC_URL"] = f"https://{self.config.user}:{self.config.password}@{self.config.host}/sdk"
+        env["GOVC_INSECURE"] = "true"
+        try:
+            res = subprocess.run(
+                ["govc", "vm.info", "-json", image_name],
+                capture_output=True, text=True, env=env, timeout=30)
+            if res.returncode == 0:
+                data = json.loads(res.stdout)
+                vms = data.get("VirtualMachines", [])
+                if vms:
+                    return vms[0].get("Config", {}).get("Uuid", "")
+        except Exception:
+            pass
+        return ""
 
     def _guest_id(self, image: str) -> str:
         img = (image or "").lower()

@@ -154,9 +154,9 @@ ROLE_TASKS = {
     name: "{{ item }}"
     state: enabled
   loop:
-    - rhel-{{ ansible_distribution_major_version }}-for-x86_64-baseos-rpms
-    - rhel-{{ ansible_distribution_major_version }}-for-x86_64-appstream-rpms
-    - satellite-{{ ansible_distribution_major_version }}-for-rhel-{{ ansible_distribution_major_version }}-x86_64-rpms
+    - rhel-{{ ansible_facts["distribution_major_version"] }}-for-x86_64-baseos-rpms
+    - rhel-{{ ansible_facts["distribution_major_version"] }}-for-x86_64-appstream-rpms
+    - satellite-6.18-for-rhel-{{ ansible_facts["distribution_major_version"] }}-x86_64-rpms
   become: true
   when: rhn_username is defined and rhn_username | length > 0
 
@@ -164,6 +164,18 @@ ROLE_TASKS = {
   ansible.builtin.package:
     name:
       - satellite
+    state: present
+  become: true
+
+- name: Set hostname for Satellite
+  ansible.builtin.hostname:
+    name: satellite.lab.local
+  become: true
+
+- name: Update /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ ansible_default_ipv4.address | default('192.168.2.78') }} satellite.lab.local satellite"
     state: present
   become: true
 
