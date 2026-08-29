@@ -25,7 +25,6 @@ from infranix.core.safety import SafetyGate
 from infranix.models import Manifest
 from infranix.terraform_gen import TerraformGenerator
 from infranix.ansible_gen import AnsibleGenerator
-from infranix.image_manager import ImageManager
 
 
 def _load_manifest(path: str) -> Manifest:
@@ -231,14 +230,18 @@ def apply(file_path: str, yes: bool, out_dir: str, skip_apply: bool):
 
     click.echo("Safety Gate APROBADO. Aplicando plan...")
 
-    # 1) Asegurar imágenes (Image Manager)
+    # 1) Asegurar imágenes (delegado a colección IMAGE)
     if manifest.images:
+        from infranix.pluginbase import Capability, PluginContext
+        from infranix.core.registry import get_registry
         click.echo("\n[1/3] Asegurando imágenes...")
-        im = ImageManager(config)
-        for img in manifest.images:
-            result = im.ensure(img.name, img.distro, img.version,
-                               available_remotes=inventory.images)
-            click.echo(f"  - {img.name}: {result.message}")
+        provider = get_registry().resolve(Capability.IMAGE)
+        if provider is None:
+            click.echo("  [!!] Sin colección IMAGE habilitada; saltando imágenes.")
+        else:
+            ctx = PluginContext(config=config, manifest=manifest, inventory=inventory)
+            for line in provider.apply(ctx).message.splitlines():
+                click.echo(f"  - {line}")
 
     # 2) Generar Terraform + Ansible
     datastore = inventory.datastores[0].name if inventory.datastores else "delldatastore"
@@ -410,7 +413,11 @@ def image_ensure(file_path: str, name: str | None):
     """Asegura que las imágenes del manifiesto estén disponibles en el ESXi.
 
     Si una imagen no está, la descarga (mirror oficial) y la sube al datastore.
+    Delega en la colección con capability IMAGE.
     """
+    from infranix.pluginbase import Capability, PluginContext
+    from infranix.core.registry import get_registry
+
     manifest = _load_manifest(file_path)
     config = load_config()
 
@@ -418,16 +425,22 @@ def image_ensure(file_path: str, name: str | None):
     scanner = make_scanner(config)
     inventory = scanner.scan()
 
-    im = ImageManager(config)
+    provider = get_registry().resolve(Capability.IMAGE)
+    if provider is None:
+        raise click.ClickException(
+            "Ninguna colección con capability IMAGE habilitada.")
     for img in manifest.images:
         if name and img.name != name:
             continue
         click.echo(f"Imagen: {img.name} ({img.distro} {img.version})")
-        result = im.ensure(img.name, img.distro, img.version,
-                           available_remotes=inventory.images)
-        icon = {"none": "[=]", "uploaded": "[+]", "template-required": "[★]",
-                "downloading": "[↓]"}.get(result.action, "[?]")
-        click.echo(f"  {icon} {result.message}")
+        single = Manifest(project=manifest.project,
+                          hypervisor=manifest.hypervisor,
+                          images=[img])
+        ctx = PluginContext(config=config, manifest=single,
+                            inventory=inventory)
+        report = provider.apply(ctx)
+        for line in report.message.splitlines():
+            click.echo(f"  {line}")
 
 
 @image.command("build")
@@ -438,18 +451,31 @@ def image_build(file_path: str, name: str | None):
 
     Requiere que el ISO ya esté en la cache local (ver 'image ensure').
     Genera kickstart/preseed, ejecuta Packer y deja un template en el ESXi.
+    Delega en la colección con capability BUILD.
     """
+    from infranix.pluginbase import Capability, PluginContext
+    from infranix.image_manager import ImageManager, ImageRecord
     manifest = _load_manifest(file_path)
     config = load_config()
 
+    builder = get_registry().resolve(Capability.BUILD)
+    if builder is None:
+        raise click.ClickException(
+            "Ninguna colección con capability BUILD habilitada (Packer).")
     im = ImageManager(config)
     for img in manifest.images:
         if name and img.name != name:
             continue
         click.echo(f"Imagen: {img.name} ({img.distro} {img.version})")
-        result = im.build_template(img.name, img.distro, img.version)
-        icon = {"template-ready": "[+]", "none": "[!]"}.get(result.action, "[?]")
-        click.echo(f"  {icon} {result.message}")
+        iso = im.cache_dir / im._iso_local_name(img.name, img.distro, img.version)
+        if not iso.exists():
+            click.echo("  [!] ISO no en cache. Ejecuta 'infra image ensure' primero.")
+            continue
+        ctx = PluginContext(config=config, manifest=manifest, image=img,
+                            extras={"iso_path": str(iso)})
+        report = builder.apply(ctx)
+        icon = "  [+] " if report.ok else "  [!!] "
+        click.echo(f"{icon}{report.message}")
 
 
 if __name__ == "__main__":

@@ -21,9 +21,10 @@ from infranix.config import InfraConfig, load_config, resolve_vars
 from infranix.adapters.discovery import Inventory, make_scanner
 from infranix.core.planner import Planner, Plan, ChangeKind
 from infranix.core.safety import SafetyGate, SafetyReport
+from infranix.core.registry import get_registry
+from infranix.pluginbase import Capability, PluginContext
 from infranix.terraform_gen import TerraformGenerator
 from infranix.ansible_gen import AnsibleGenerator
-from infranix.image_manager import ImageManager
 from infranix.models import Manifest
 
 
@@ -120,19 +121,25 @@ class InfraNix:
             report.errors.append(report.safety_summary)
             return report
 
-        # 4) Asegurar imágenes (solo en modo aplicativo; en dry-run se reporta)
+        # 4) Asegurar imágenes (delegado a la colección con capability IMAGE)
         if manifest.images:
+            img_provider = get_registry().resolve(Capability.IMAGE)
+            ctx = PluginContext(config=self.config, manifest=manifest,
+                                inventory=inventory, out_dir=out_dir)
+            if not img_provider:
+                report.errors.append(
+                    "Ninguna colección con capability IMAGE habilitada "
+                    "(¿`infra collection list`?).")
+                return report
             if apply:
-                im = ImageManager(self.config)
-                for img in manifest.images:
-                    result = im.ensure(img.name, img.distro, img.version,
-                                       available_remotes=inventory.images)
-                    report.images_ensured.append(
-                        f"{img.name}: {result.message}")
+                res = img_provider.apply(ctx)
+                report.images_ensured = res.message.splitlines()
             else:
                 report.images_ensured = [
-                    f"{img.name}: (dry-run) se asegurará durante el apply"
-                    for img in manifest.images]
+                    f"{p['image']}: (dry-run) se asegurará durante el apply"
+                    for p in img_provider.plan(ctx).get("ensure", [])
+                    if p["status"] == "needed"] or [
+                    "(dry-run) imágenes requeridas se asegurarán en apply"]
 
         # 5) Generar artefactos (siempre que el plan esté aprobado, para revisión)
         try:
