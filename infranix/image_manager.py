@@ -422,7 +422,9 @@ class ImageManager:
     # ── Template build with Packer (via the BUILD collection) ──
     def build_template(self, name: str, distro: str, version: str,
                        checksum: str = "none",
-                       datastore_iso: str | None = None) -> ImageManagerResult:
+                       datastore_iso: str | None = None,
+                       datastore_name: str | None = None,
+                       root_password: str | None = None) -> ImageManagerResult:
         """Build a cloneable template from the ISO (Packer).
 
         Requires the ISO to be in the local cache or on the datastore.
@@ -437,7 +439,7 @@ class ImageManager:
         iso_path = str(local_path)
         if not local_path.exists():
             if datastore_iso:
-                ds_name = self.config.datastore or "datastore1"
+                ds_name = datastore_name or self.config.datastore or "datastore1"
                 iso_path = f"[{ds_name}] ISO/{datastore_iso}"
             else:
                 return ImageManagerResult(
@@ -454,10 +456,15 @@ class ImageManager:
         image = Image(name=name, distro=distro, version=version,
                       build={"builder": "packer"})
         work_dir = self.cache_dir / f"packer-{name}"
+        extras = {"iso_path": iso_path}
+        if datastore_name:
+            extras["datastore"] = datastore_name
+        if root_password:
+            extras["root_password"] = root_password
         ctx = PluginContext(config=self.config, manifest=None,
                             image=image,
                             work_dir=work_dir,
-                            extras={"iso_path": iso_path})
+                            extras=extras)
         report = provider.apply(ctx)
         print(f"    [{provider.name}] {report.message}")
         if report.ok:

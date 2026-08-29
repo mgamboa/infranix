@@ -62,7 +62,18 @@ class Provider(PluginProvider):
             return PluginReport(ok=False, action="no-iso",
                                 message=f"ISO for '{img.name}' not located.")
 
-        builder = PackerBuilder(ctx.config, img, iso_path=iso,
+        # Use datastore from extras if provided (from project inventory)
+        packer_config = ctx.config
+        if ctx.extras.get("datastore"):
+            from dataclasses import replace
+            packer_config = replace(ctx.config, datastore=ctx.extras["datastore"])
+
+        # Override root_password if provided from project
+        if ctx.extras.get("root_password"):
+            from dataclasses import replace
+            packer_config = replace(packer_config, root_password=ctx.extras["root_password"])
+
+        builder = PackerBuilder(packer_config, img, iso_path=iso,
                                 mirror_base=ctx.config.rhel_mirror_url or "")
         work = ctx.work_dir or ctx.extras.get("work_dir")
         from pathlib import Path

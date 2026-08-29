@@ -133,11 +133,25 @@ class InfraNix:
         im = ImageManager(self.config)
         datastore_isos = inventory.images if inventory else []
 
+        # Get datastore name from inventory
+        ds_name = None
+        if inventory and hasattr(inventory, 'datastores') and inventory.datastores:
+            ds_name = inventory.datastores[0].name
+
+        # Get root_password from manifest servers' vars (already decrypted)
+        root_pw = None
+        for s in manifest.servers:
+            if s.vars and s.vars.get("root_password"):
+                root_pw = s.vars["root_password"]
+                break
+
         for img in manifest.images:
             matched_iso = im._match_remote(datastore_isos, img.distro, img.version)
             result = im.build_template(
                 img.name, img.distro, img.version,
-                datastore_iso=matched_iso)
+                datastore_iso=matched_iso,
+                datastore_name=ds_name,
+                root_password=root_pw)
             messages.append(f"{img.name}: {result.action} -- {result.message}")
 
         return messages
