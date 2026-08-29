@@ -1,6 +1,6 @@
-# Ejemplo: despliegue de una VM declarado con variables dinámicas.
-# Los ${VAR} se resuelven en tiempo de ejecución desde el entorno o
-# ~/.infranix/.env  (ver docs/MANUAL.md, sección de Variables).
+# Example: deploy a single VM declared with dynamic ${VAR} values.
+# ${VAR}s resolve at runtime from the environment or ~/.infranix/.env
+# (see docs/MANUAL.md, Variables section).
 version: 1
 project: infranix-poc
 hypervisor: ${INFRA_HYPERVISOR}

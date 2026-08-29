@@ -1,56 +1,57 @@
 # InfraNix — Declarative Infrastructure Orchestrator
 
-> Un sistema declarativo que interpreta un manifiesto YAML de infraestructura y,
-> de forma autosuficiente y segura, la provee (Terraform), configura (Ansible),
-> descubre (govc/vSphere API) y mantiene a lo largo del tiempo.
+> A declarative system that interprets an infrastructure YAML manifest and,
+> self-sufficiently and safely, provisions it (Terraform), configures it
+> (Ansible), discovers it (govc/vSphere API) and maintains it over time.
 
-## 1. Filosofía de diseño
+## 1. Design philosophy
 
-### 1.1 Declarativo primero
-El usuario describe el **estado deseado**, nunca los pasos. InfraNix calcula el
-**estado actual** (scan), lo compara contra el deseado y aplica solo el *delta*.
+### 1.1 Declarative first
+The user describes the **desired state**, never the steps. InfraNix computes the
+**current state** (scan), compares it against the desired one and applies only
+the *delta*.
 
-### 1.2 Seguridad = núcleo (no un add-on)
-Tres principios no negociables:
+### 1.2 Safety = core (not an add-on)
+Three non-negotiable principles:
 
-1. **El sistema es el último árbitro.** Si una operación puede causar pérdida
-   de datos o caída de un servicio existente, NO se ejecuta — se detiene y se
-   propone una alternativa.
+1. **The system is the last arbiter.** If an operation can cause data loss or
+   downtime of an existing service, it is NOT executed — it stops and proposes
+   an alternative.
 
-2. **Destrucción con opt-in explícito.** Toda operación destructiva
-   (borrar VM, eliminar redes, remover load balancer, destruir storage) requiere
-   que el manifiesto lo declare explícitamente:
+2. **Destruction with explicit opt-in.** Every destructive operation (delete
+   VM, remove networks, drop load balancer, destroy storage) requires the
+   manifest to declare it explicitly:
    ```yaml
-   destroy: true        # global opt-in
-   # o por recurso:
+   safety:
+     destroy: true        # global opt-in
+   # or per resource:
    servers:
      - name: old-vm
        action: destroy
    ```
-   Sin `destroy: true` (global o por recurso), la operación se bloquea.
+   Without `destroy: true` (global or per resource), the operation is blocked.
 
-3. **Dry-run por defecto.** El comando por defecto es `plan` (equivalente a
-   `terraform plan`): muestra el plan completo de cambios y NO ejecuta nada.
-   `apply` requiere confirmación interactiva si hay cambios destructivos.
+3. **Dry-run by default.** The default command is `plan` (equivalent to
+   `terraform plan`): it shows the full change plan and executes nothing.
+   `apply` requires interactive confirmation if there are destructive changes.
 
-### 1.3 Autosuficiente pero auditado
-InfraNix toma decisiones (dónde esto gestionado por Jarvis/brain para resolución
-de versiones, IPs, mirror selection), pero cada decisión queda registrada en un
-**plan de cambio** auditable antes de ejecutarse.
+### 1.3 Self-sufficient but audited
+InfraNix makes decisions (version resolution, IPs, mirror selection), but every
+decision is recorded in an auditable **change plan** before it runs.
 
-## 2. Stack tecnológico
+## 2. Technology stack
 
-| Capa           | Tecnología                          | Rol                                          |
-|----------------|-------------------------------------|----------------------------------------------|
-| CLI/Orquestador| Python                             | Interpreta manifest, orquesta backend        |
-| Provisioning   | Terraform                          | Crea/actualiza recursos (VM, redes, LB, cloud)|
-| Configuración  | Ansible                            | Configura SO/produtos sobre las VMs           |
-| Image Mgmt     | Packer + govc + Python              | Construye/list templates de SO                |
-| VMware API     | govc (CLI) + PyVmomi (SDK)          | Scan, manipulación directa de vSphere/ESXi    |
-| API/Red        | vSphere vDS + NSX + Ansible network | Switches, routers, LBs                        |
-| Estado         | Terraform state + archivo de estado | Persistencia y migración del estado           |
+| Layer            | Technology                           | Role                                        |
+|------------------|--------------------------------------|---------------------------------------------|
+| CLI/Orchestrator | Python                              | Interprets manifest, orchestrates backends  |
+| Provisioning     | Terraform                           | Creates/updates resources (VM, networks, LB)|
+| Configuration    | Ansible                             | Configures OS/products on the VMs           |
+| Image Mgmt       | Packer + govc + Python               | Builds/lists OS templates                    |
+| VMware API       | govc (CLI) + PyVmomi (SDK)           | Scan, direct vSphere/ESXi manipulation      |
+| API/Network      | vSphere vDS + NSX + Ansible network  | Switches, routers, LBs                      |
+| State            | Terraform state + state file         | Persistence and state migration             |
 
-## 3. Arquitectura en capas
+## 3. Layered architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -59,43 +60,59 @@ de versiones, IPs, mirror selection), pero cada decisión queda registrada en un
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
-│               LAYER 1: ORCHESTRATOR (nucleo)                │
-│   Manifest Parser · Planner (state diff) · Executor         │
-│   SafetyGate · Dependency Resolver · Approvals             │
+│               LAYER 1: ORCHESTRATOR (thin core)             │
+│   Manifest Parser · Planner (state diff) · SafetyGate       │
+│   Collection Registry (resolve/auto-install) · Executor     │
 └───────┬──────────────────────┬──────────────────┬───────────┘
-        │                      │                  │
+        │ collection           │ collection       │ collection
+        │ SCAN                 │ PROVISION        │ CONFIGURE
 ┌───────▼────────┐   ┌─────────▼────────┐  ┌──────▼─────────┐
-│ LAYER 2: PROV  │   │ LAYER 2: CONFIG  │  │ LAYER 2: SCAN  │
-│  Terraform     │   │   Ansible        │  │  govc/API      │
-│  providers     │   │   inventories    │  │  discovery     │
-│  vsphere/esxi  │   │   roles/products │  │  state survey  │
-│  aws/gcp/azr   │   │   network (IOS..)│  │                │
+│ LAYER 2: SCAN  │   │ LAYER 2: PROV    │  │ LAYER 2: CONFIG│
+│  vmware(govc)  │   │  terraform       │  │  ansible       │
+│  mock          │   │  vsphere/esxi    │  │  inventory     │
+│                │   │  (IMAGE/BUILD too)│ │  roles/products│
 └───────┬────────┘   └─────────┬────────┘  └──────┬─────────┘
         │                      │                  │
 ┌───────▼──────────────────────▼──────────────────▼─────────┐
-│               LAYER 3: PLATFORM ADAPTERS                    │
+│               LAYER 3: PLATFORM ADAPTERS                   │
 │   vSphere/vCenter · ESXi · KVM/libvirt · Proxmox · Network │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 4. El Manifiesto declarativo (formato)
+The core (Layer 1) keeps the manifest schema, the diff planner and the Safety
+Gate. Every *capability* (scan, provision, configure, image, build) is delivered
+by a **collection** — an independent Python package implementing
+`PluginProvider` and discovered via `infranix.collections` entry points.
+
+## 4. The declarative manifest (format)
 
 ```yaml
 # infra.yaml
 version: 1
 project: infra-nix-demo
-hypervisor: esxi            # vcenter | esxi | proxmox | kvm
+hypervisor: esxi            # vcenter | esxi | proxmox | kvm | mock
 
-# Respeta los entornos existentes; se hace scan antes de actuar
+# Respect existing environments; scan before acting
 scan_before_apply: true
 
-# POLÍTICAS DE SEGURIDAD
+# COLLECTIONS the core needs (auto-installed before running, like ansible-galaxy)
+collections:
+  - name: vmware
+    source: builtin
+  - name: terraform
+    source: builtin
+  # external/offline example:
+  # - name: proxmox
+  #   source: archive
+  #   path: dist/infra-collection-proxmox-0.1.0.tar.gz
+
+# SECURITY POLICIES
 safety:
-  destroy: false            # opt-in global para operaciones destructivas
+  destroy: false            # global opt-in for destructive operations
   allow_downtime: false
   confirm_destructive: true
 
-# IMAGENES / TEMPLATES (auto-descarga si no existe)
+# IMAGES / TEMPLATES (auto-download if missing)
 images:
   - name: rhel-9.4
     distro: rhel
@@ -103,12 +120,12 @@ images:
     source:
       type: iso                   # iso | ova | cloudimage | template
       url: https://mirror.example/rhel-9.4.iso
-    build:                        # como convertirlo en template usable
+    build:                        # how to turn it into a usable template
       builder: packer
       autounattend: false
       cloud_init: true
 
-# SERVIDORES (VMs)
+# SERVERS (VMs)
 servers:
   - name: web-prod-01
     image: rhel-9.4
@@ -117,15 +134,15 @@ servers:
     disk: 100
     network:
       - name: prod-net
-        ip: ${SERVER_IP}
+        ip: ${SERVER_IP}          # values are dynamic — set in ~/.infranix/.env
         gateway: ${GATEWAY}
         dns: [${DNS}]
-    roles:            # lo que Ansible debe instalar/configurar
+    roles:            # what Ansible must install/configure
       - webserver
       - monitoring-agent
-    action: create    # create | update | destroy (destroy exige safety)
+    action: create    # create | update | destroy (destroy requires safety)
 
-# REDES
+# NETWORKS
 networks:
   - name: prod-net
     type: portgroup    # portgroup | dvswitch | vlan
@@ -134,7 +151,7 @@ networks:
     gateway: ${GATEWAY}
     dhcp: false
 
-# ROUTERS VIRTUALES
+# VIRTUAL ROUTERS
 routers:
   - name: edge-router
     image: vyos-1.5
@@ -156,91 +173,90 @@ load_balancers:
         health: /healthz
 ```
 
-## 5. Flujo de ejecución
+## 5. Execution flow
 
 ```
 infra plan -f infra.yaml
         │
         ▼
-┌─ LAYER 0 ─────────────────────────────────┐
-│ 1. Parse manifest + validar schema (Pydantic)│
+┌─ ORCHESTRATOR ────────────────────────────┐
+│ 0. Resolve collections (auto-install if any missing)
+│ 1. Validate manifest + schema (Pydantic)  │
 └──────────────┬─────────────────────────────┘
                ▼
-┌─ LAYER 2 scan ─────────────────────────────┐
-│ 2. Discovery actual (govc):
-│    - list VMs, networks, templates, datastores│
-│    - comparar con lo declarado               │
+┌─ SCAN collection ─────────────────────────┐
+│ 2. Current discovery (govc):
+│    - list VMs, networks, templates, datastores
+│    - compare with what is declared        │
 └──────────────┬─────────────────────────────┘
                ▼
-┌─ LAYER 1 planner ──────────────────────────┐
-│ 3. Calcular DIFF (deseado - actual)         │
-│ 4. Clasificar cada cambio:                 │
-│    create ✓ · update ✓ · destroy ✋(gated)  │
-│ 5. SAFETY GATE: si hay destroy sin opt-in, │
-│    bloquear y proponer alternativas         │
-│ 6. Resolver dependencias (red antes que VM)│
+┌─ PLANNER (core) ──────────────────────────┐
+│ 3. Compute DIFF (desired - current)        │
+│ 4. Classify each change:                  │
+│    create ✓ · update ✓ · destroy ✋(gated) │
+│ 5. SAFETY GATE: if destroy w/o opt-in,    │
+│    block and propose alternatives         │
 └──────────────┬─────────────────────────────┘
                ▼
-┌─ OUTPUT ───────────────────────────────────┐
-│ PLAN legible: qué se crea/actualiza/borra,  │
-│ qué se va a descargar/construir, coste,     │
-│ advertencias                               │
+┌─ PROVISION/CONFIGURE collections ─────────┐
+│ 6. Generate Terraform + Ansible           │
+│ 7. (apply) run them, with images ensured  │
 └────────────────────────────────────────────┘
 
-infra apply -f infra.yaml        # ejecuta tras re-validar safety gate
-infra scan --hypervisor esxi     # solo discover, sin acciones
-infra destroy -f infra.yaml      # exige --yes + safety.destroy=true
+infra apply -f infra.yaml        # executes after re-validating safety gate
+infra scan                       # discovery only, no actions
+infra destroy -f infra.yaml      # requires --yes + safety.destroy=true
 ```
 
-## 6. Image Manager (auto-descarga de SO)
+## 6. Image Manager (auto-download of OS)
 
-Cuando el manifest pide un SO cuya imagen/template NO existe en el hypervisor:
+When the manifest asks for an OS whose image/template does NOT exist on the
+hypervisor:
 
-1. **Resolver fuente** — Jarvis decide el mirror oficial (RHEL, Ubuntu cloud,
-   Rocky, Debian, etc.) según `distro` + `version`.
-2. **Descargar** el ISO/OVA/cloud-image (cache local reutilizable).
-3. **Subir al datastore** (govc datastore.upload).
-4. **Construir template** — Packer (kickstart/cloud-init/autounattend) para
-   dejarlo booteable y listo como template de clonado.
-5. **Registrar** en el catálogo local de InfraNix (para no repetir).
+1. **Resolve source** — the system decides the official mirror (RHEL, Ubuntu
+   cloud, Rocky, Debian, etc.) based on `distro` + `version`.
+2. **Download** the ISO/OVA/cloud-image (reusable local cache).
+3. **Upload to the datastore** (govc datastore.upload).
+4. **Build template** — Packer (kickstart/cloud-init/autounattend) to leave it
+   bootable and ready as a clone template.
+5. **Register** in the local InfraNix catalog (to avoid repeating).
 
-Cache: `~/.infranix/images/` con hash + metadatos de versión. Reutiliza entre
-proyectos y evita re-descargas.
+Cache: `~/.infranix/images/` with version metadata. Reused across projects and
+avoids re-downloads.
 
-## 7. Seguridad (Safety Gate) — detalle
+## 7. Safety (Safety Gate) — detail
 
-El Safety Gate es un componente transversal que se evalúa en `plan` y de nuevo
-(con más fuerza) en `apply`. Reglas:
+The Safety Gate is a cross-cutting component evaluated at `plan` and again
+(stronger) at `apply`. Rules:
 
-| Regla | Comportamiento |
-|-------|----------------|
-| `DestroyRecurso` | Bloqueado salvo `safety.destroy: true` global O `action: destroy` + confirmación en el recurso |
-| `DownServicioExistente` | Bloqueado salvo `safety.allow_downtime: true` |
-| `OverwriteConfig` | Siempre pide confirmación; registra backup |
-| `ImagenNoExiste` | No bloquea; dispara Image Manager (descarga/build) |
-| `ConflictoIP` | Bloquea; propone IP libre alternativa |
-| `FaltaDependencia` | Resuelve topológicamente o bloquea con mensaje claro |
+| Rule                | Behaviour |
+|---------------------|-----------|
+| `DestroyResource`   | Blocked unless `safety.destroy: true` (global) OR `action: destroy` + confirmation on the resource |
+| `ExistingServiceDown` | Blocked unless `safety.allow_downtime: true` |
+| `OverwriteConfig`   | Always asks for confirmation; records a backup |
+| `ImageMissing`      | Does not block; triggers Image Manager (download/build) |
+| `IPConflict`        | Blocks; proposes a free alternative IP |
+| `MissingDependency` | Resolves topologically or blocks with a clear message |
 
-El Safety Gate **nunca** es opcional; es la capa por defecto. En modo
-`--force-destroy` solo se puede activar declarando en el manifold.
+The Safety Gate is **never** optional; it is the default layer.
 
-## 8. Roadmap por fases
+## 8. Roadmap by phase
 
-- **Fase 0 — Fundación**: estructura del proyecto, schema Pydantic del manifest,
-  CLI (`plan`/`scan`), motor de diff, Safety Gate. Soporte ESXi standalone.
-- **Fase 1 — Provisioning**: generación de Terraform (provider vsphere/esxi),
-  creación de VMs, redes (portgroup/vDS), imágenes.
-- **Fase 2 — Configuración**: inventarios Ansible, roles base (SO, productos),
-  ejecución post-provision.
-- **Fase 3 — Image Manager**: auto-descarga + build de templates.
-- **Fase 4 — Redes & LB**: routers virtuales (VyOS/OPNsense), load balancers
-  (haproxy/nginx/NSX), switches via Ansible network.
-- **Fase 5 — Hipervisores múltiples**: vCenter, Proxmox, KVM/libvirt, cloud.
-- **Fase 6 — UI/API**: REST API + web dashboard del estado y planes.
+- **Phase 0 — Foundation**: project structure, Pydantic manifest schema, CLI
+  (`plan`/`scan`), diff engine, Safety Gate. Standalone ESXi support.
+- **Phase 1 — Provisioning**: Terraform generation (vsphere/esxi provider), VM
+  creation, networks (portgroup/vDS), images.
+- **Phase 2 — Configuration**: Ansible inventories, base roles (OS, products),
+  post-provision execution.
+- **Phase 3 — Image Manager**: auto-download + template build.
+- **Phase 4 — Networks & LB**: virtual routers (VyOS/OPNsense), load balancers
+  (haproxy/nginx/NSX), Ansible network switches.
+- **Phase 5 — Multiple hypervisors**: vCenter, Proxmox, KVM/libvirt, cloud.
+- **Phase 6 — UI/API**: REST API + web dashboard of state and plans.
 
-## 9. Estado del proyecto
+## 9. Project status
 
-- Lenguaje motor: **Python 3.14+**
-- Dependencias core: `pydantic`, `click` (CLI), `jinja2` (templates),
-  `PyYAML`. Adapters: `govc` (VMware), `terraform`, `ansible`.
-- Workspace: `/home/mgamboa/ai/infranix`
+- Engine language: **Python 3.11+**
+- Core dependencies: `pydantic`, `click` (CLI), `jinja2` (templates), `PyYAML`.
+  Adapters: `govc` (VMware), `terraform`, `ansible`, `packer` — each provided
+  by its own collection.
