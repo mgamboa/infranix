@@ -262,17 +262,29 @@ class ImageManager:
         env = dict(os.environ)
         env["GOVC_URL"] = url
         env["GOVC_INSECURE"] = "true"
+        # Use datastore.ls -l to get file sizes
         res = subprocess.run(
-            ["govc", "datastore.info", f"ISO/{iso_name}"],
+            ["govc", "datastore.ls", "-l", "ISO/"],
             capture_output=True, text=True, env=env, timeout=30)
         if res.returncode != 0:
             return 0
         for line in res.stdout.splitlines():
-            if "Size:" in line:
-                try:
-                    return int(line.split(":")[1].strip())
-                except ValueError:
-                    pass
+            if iso_name in line:
+                # Format: "14.5GB  Sat Aug 29 15:06:27 2026  filename.iso"
+                parts = line.split()
+                if parts:
+                    size_str = parts[0].upper()
+                    try:
+                        if size_str.endswith("GB"):
+                            return int(float(size_str[:-2]) * 1024 * 1024 * 1024)
+                        elif size_str.endswith("MB"):
+                            return int(float(size_str[:-2]) * 1024 * 1024)
+                        elif size_str.endswith("KB"):
+                            return int(float(size_str[:-2]) * 1024)
+                        else:
+                            return int(size_str)
+                    except ValueError:
+                        return 0
         return 0
 
     def _delete_datastore_iso(self, iso_name: str) -> None:
