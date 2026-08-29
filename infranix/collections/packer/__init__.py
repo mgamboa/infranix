@@ -62,7 +62,8 @@ class Provider(PluginProvider):
             return PluginReport(ok=False, action="no-iso",
                                 message=f"ISO for '{img.name}' not located.")
 
-        builder = PackerBuilder(ctx.config, img, iso_path=iso)
+        builder = PackerBuilder(ctx.config, img, iso_path=iso,
+                                mirror_base=ctx.config.rhel_mirror_url or "")
         work = ctx.work_dir or ctx.extras.get("work_dir")
         from pathlib import Path
         work = Path(work) if work else None

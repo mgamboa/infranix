@@ -37,6 +37,9 @@ class InfraConfig:
     # VM credentials (root password baked into the template via kickstart)
     root_password: Optional[str] = None
 
+    # RHEL mirror URL for kickstart / Packer builds
+    rhel_mirror_url: Optional[str] = None
+
     # Image cache
     image_cache: Path = CONFIG_DIR / "images"
 
@@ -84,6 +87,7 @@ def load_config() -> InfraConfig:
         network=_get("INFRA_NETWORK"),
         insecure=(_get("INFRA_INSECURE") or "1") != "0",
         root_password=_get("ROOT_PASSWORD"),
+        rhel_mirror_url=_get("RHEL_MIRROR_URL"),
     )
 
 
