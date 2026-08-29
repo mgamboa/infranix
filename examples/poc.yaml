@@ -31,6 +31,6 @@ servers:
       - name: ${INFRA_NETWORK}
         ip: ${POC_IP}
         gateway: ${POC_GATEWAY}
-        dns: [${POC_DNS}]
+        dns: ['${POC_DNS}']
     roles: [webserver]
     action: create

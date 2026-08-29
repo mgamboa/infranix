@@ -19,10 +19,10 @@ images:
     version: "${RHEL8_VERSION}"
 
 networks:
-  - name: ${INFRA_NETWORK}
+  - name: '${INFRA_NETWORK}'
     type: portgroup
-    subnet: ${SUBNET}
-    gateway: ${GATEWAY}
+    subnet: '${SUBNET}'
+    gateway: '${GATEWAY}'
 
 servers:
   - name: web-prod-01
@@ -31,7 +31,10 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: ${INFRA_NETWORK}, ip: ${WEB1_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
+      - name: '${INFRA_NETWORK}'
+        ip: '${WEB1_IP}'
+        gateway: '${GATEWAY}'
+        dns: ['${DNS}']
     roles: [webserver, monitoring-agent]
     action: create
 
@@ -41,7 +44,10 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: ${INFRA_NETWORK}, ip: ${WEB2_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
+      - name: '${INFRA_NETWORK}'
+        ip: '${WEB2_IP}'
+        gateway: '${GATEWAY}'
+        dns: ['${DNS}']
     roles: [webserver, monitoring-agent]
     action: create
 
@@ -49,7 +55,8 @@ routers:
   - name: edge-router
     image: rhel-8
     interfaces:
-      - { network: ${INFRA_NETWORK}, ip: ${ROUTER_IP} }
+      - network: '${INFRA_NETWORK}'
+        ip: '${ROUTER_IP}'
     nat: true
 
 load_balancers:

@@ -14,14 +14,22 @@ safety:
   confirm_destructive: true
 
 images:
-  - { name: rhel-9.5, distro: rhel, version: "9.5", source: { type: template } }
-  - { name: rocky-10.2, distro: rocky, version: "10.2", source: { type: template } }
+  - name: rhel-9.5
+    distro: rhel
+    version: "9.5"
+    source:
+      type: template
+  - name: rocky-10.2
+    distro: rocky
+    version: "10.2"
+    source:
+      type: template
 
 networks:
-  - name: ${INFRA_NETWORK}
+  - name: '${INFRA_NETWORK}'
     type: portgroup
-    subnet: ${SUBNET}
-    gateway: ${GATEWAY}
+    subnet: '${SUBNET}'
+    gateway: '${GATEWAY}'
 
 servers:
   - name: web-prod-01
@@ -30,7 +38,10 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: ${INFRA_NETWORK}, ip: ${WEB_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
+      - name: '${INFRA_NETWORK}'
+        ip: '${WEB_IP}'
+        gateway: '${GATEWAY}'
+        dns: ['${DNS}']
     roles: [webserver]
     action: create
 

@@ -136,7 +136,7 @@ servers:
       - name: prod-net
         ip: ${SERVER_IP}          # values are dynamic — set in ~/.infranix/.env
         gateway: ${GATEWAY}
-        dns: [${DNS}]
+        dns: ['${DNS}']
     roles:            # what Ansible must install/configure
       - webserver
       - monitoring-agent

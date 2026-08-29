@@ -136,7 +136,7 @@ servers:
       - name: VM Network                 # network name (portgroup)
         ip: ${SERVER_IP}                 # IP/CIDR — dynamic value
         gateway: ${GATEWAY}              # gateway — dynamic value
-        dns: [${DNS}]                    # DNS servers
+        dns: ['${DNS}']                   # DNS servers
     roles:                               # what Ansible must configure
       - webserver
       - monitoring-agent
@@ -238,7 +238,7 @@ servers:
       - name: VM Network
         ip: ${WEB1_IP}
         gateway: ${GATEWAY}
-        dns: [${DNS}]
+        dns: ['${DNS}']
 ```
 
 ```bash
@@ -290,7 +290,10 @@ servers:
     mem: 8192
     disk: 60
     network:
-      - { name: VM Network, ip: ${WEB1_IP}, gateway: ${GATEWAY}, dns: [${DNS}] }
+      - name: VM Network
+        ip: ${WEB1_IP}
+        gateway: ${GATEWAY}
+        dns: ['${DNS}']
     roles: [webserver]
     action: create
 

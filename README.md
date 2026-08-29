@@ -69,6 +69,34 @@ Collections are declarative: a manifest declares what it needs in the
 `collections:` section, and the core auto-installs anything missing before
 running (like `ansible-galaxy` installing `requirements.yml`).
 
+## Dynamic values & credentials
+
+**Never hardcode real IPs, hostnames or passwords.** Use `${VAR}` placeholders —
+they resolve at runtime from the environment or `~/.infranix/.env`:
+
+```yaml
+hypervisor: ${INFRA_HYPERVISOR}
+networks:
+  - name: ${INFRA_NETWORK}
+    subnet: ${SUBNET}
+    gateway: ${GATEWAY}
+servers:
+  - name: web-01
+    network:
+      - ip: ${WEB_IP}
+        dns: ['${DNS}']
+```
+
+Supported variables (set in `~/.infranix/.env`):
+
+- `INFRA_HYPERVISOR` `INFRA_HOST` `INFRA_USER` `INFRA_PASSWORD`
+  `INFRA_URL` `INFRA_INSECURE` `INFRA_NETWORK` `INFRA_DATASTORE` `INFRA_DATACENTER`
+- Demo/network values: `SUBNET` `GATEWAY` `DNS` `WEB1_IP` `WEB2_IP` `WEB_IP`
+  `ROUTER_IP` `POC_*` `PROJECT_NAME` `TARGET_*` `EXISTING_SERVER_*` `ROCKY_VERSION` `RHEL8_VERSION`
+
+See `docs/MANUAL.md §9.5` for the full rules. The credentials file is
+per-user, local to the machine and ignored by git — never committed.
+
 ## Documentation
 
 - **[docs/MANUAL.md](docs/MANUAL.md)** — How to declare things in the YAML.
