@@ -105,7 +105,7 @@ PACKER_HCL = """\
 packer {{
   required_plugins {{
     vmware = {{
-      version = ">= 1.0.0"
+      version = ">= 1.0.0, < 2.0.0"
       source  = "github.com/hashicorp/vmware"
     }}
   }}
@@ -122,7 +122,6 @@ source "vmware-iso" "template" {{
   remote_username      = "{{ .VMUser }}"
   remote_password      = "{{ .VMPassword }}"
   remote_datastore     = "{{ .Datastore }}"
-  cache_datastore      = "{{ .Datastore }}"
   vnc_bind_address     = "0.0.0.0"
 
   # ISO
